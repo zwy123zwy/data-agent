@@ -2,7 +2,7 @@
 工作流节点：意图识别
 """
 from ..state import WorkflowState
-from ...core.llm import llm_service
+from ..core.llm import llm_service
 
 
 INTENT_SYSTEM_PROMPT = """你是一个意图识别助手。

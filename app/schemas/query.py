@@ -10,6 +10,7 @@ class QueryRequest(BaseModel):
     human_feedback: bool = Field(False, description="是否启用人工反馈")
     human_feedback_content: Optional[str] = Field(None, description="人工反馈内容（恢复时传入）")
     rejected_plan: bool = Field(False, description="是否拒绝当前方案")
+    nl2sql_only: bool = Field(False, description="仅 NL2SQL 模式")
 
 
 class QueryResponse(BaseModel):

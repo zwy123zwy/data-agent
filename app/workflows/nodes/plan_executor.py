@@ -1,180 +1,171 @@
 """
-计划执行节点（Plan Executor Node）
-按步骤执行多步骤计划
+计划执行调度节点（Plan Executor Node） — 对齐 Java PlanExecutorNode
+作为图内的循环调度器：校验 Plan → 决定下一步 → 步骤推进 → 完成检测
 """
-from typing import Dict, Any, List
-from ..state import AgentState
-from .sql_execute import sql_execute_node
-from ...core.llm import get_llm_client
+from typing import Dict, Any, Literal
+import json
+from ..state import WorkflowState, get_current_step_number
+from ..core.config import settings
 import logging
 
 logger = logging.getLogger(__name__)
 
+# 支持的节点类型 — 对齐 Java Constant
+SQL_GENERATE_NODE = "SQL_GENERATE_NODE"
+PYTHON_GENERATE_NODE = "PYTHON_GENERATE_NODE"
+REPORT_GENERATOR_NODE = "REPORT_GENERATOR_NODE"
+HUMAN_FEEDBACK_NODE = "HUMAN_FEEDBACK_NODE"
+SUPPORTED_NODES = {SQL_GENERATE_NODE, PYTHON_GENERATE_NODE, REPORT_GENERATOR_NODE}
 
-async def plan_executor_node(state: AgentState) -> Dict[str, Any]:
+
+def _get_step_params(step: dict) -> dict:
+    """兼容新旧 Plan 格式: 获取步骤参数"""
+    tp = step.get("tool_parameters") or {}
+    return {
+        "instruction": tp.get("instruction", step.get("description", "")),
+        "sql_query": tp.get("sql_query"),
+        "summary_and_recommendations": tp.get("summary_and_recommendations"),
+    }
+
+
+def _validate_plan(plan: dict) -> str | None:
+    """校验 Plan 结构有效性 — 对齐 Java PlanExecutorNode.validateExecutionPlanStructure"""
+    if not plan:
+        return "Validation failed: The plan is empty (null)."
+    execution_plan = plan.get("execution_plan") or plan.get("steps", [])
+    if not execution_plan:
+        return "Validation failed: The generated plan has no execution steps."
+
+    for step in execution_plan:
+        tool = step.get("tool_to_use") or step.get("type", "").upper()
+        if tool not in SUPPORTED_NODES:
+            return f"Validation failed: Plan contains an invalid tool name: '{tool}' in step {step.get('step', step.get('id'))}"
+
+        tp = step.get("tool_parameters") or {}
+        params = _get_step_params(step)
+        if tool == SQL_GENERATE_NODE and not params["instruction"]:
+            return f"Validation failed: SQL generation node is missing description in step {step.get('step', step.get('id'))}"
+        if tool == PYTHON_GENERATE_NODE and not params["instruction"]:
+            return f"Validation failed: Python generation node is missing instruction in step {step.get('step', step.get('id'))}"
+        if tool == REPORT_GENERATOR_NODE and not params["summary_and_recommendations"]:
+            return f"Validation failed: Report generation node is missing summary_and_recommendations in step {step.get('step', step.get('id'))}"
+
+    return None  # 校验通过
+
+
+def _get_execution_steps(plan: dict) -> list:
+    """兼容新旧格式：获取执行步骤列表"""
+    return plan.get("execution_plan") or plan.get("steps", [])
+
+
+async def plan_executor_node(state: WorkflowState) -> Dict[str, Any]:
+    """计划执行调度节点 — 对齐 Java PlanExecutorNode.apply()
+
+    作为图内的循环调度器：
+    1. 校验 Plan 结构
+    2. 检查 Human Review 开关
+    3. 判断步骤是否全部完成
+    4. 路由到下一步执行节点
     """
-    计划执行节点
+    # 1. 解析并校验 Plan
+    plan_raw = state.get("query_plan")
+    if isinstance(plan_raw, str):
+        try:
+            plan = json.loads(plan_raw)
+        except json.JSONDecodeError as e:
+            logger.error(f"[PlanExecutor] Plan JSON parse error: {e}")
+            return _validation_failed(state, f"Validation failed: The plan is not a valid JSON structure. Error: {e}")
+    else:
+        plan = plan_raw or {}
 
-    按顺序执行计划中的每个步骤
+    error = _validate_plan(plan)
+    if error:
+        logger.error(f"[PlanExecutor] Plan validation failed: {error}")
+        return _validation_failed(state, error)
 
-    Args:
-        state: 工作流状态
+    steps = _get_execution_steps(plan)
+    logger.info("[PlanExecutor] Plan validation successful.")
 
-    Returns:
-        更新后的状态
-    """
-    query_plan = state.get("query_plan")
-
-    if not query_plan or not query_plan.get("steps"):
-        logger.error("[PlanExecutor] No plan to execute")
-        return {"error": "No execution plan available"}
-
-    steps = query_plan["steps"]
-    logger.info(f"[PlanExecutor] Executing plan with {len(steps)} steps")
-
-    # 存储每个步骤的结果
-    step_results = {}
-
-    try:
-        for step in steps:
-            step_id = step["id"]
-            step_type = step["type"]
-            description = step.get("description", "")
-
-            logger.info(f"[PlanExecutor] Executing step {step_id}: {description}")
-
-            # 检查依赖
-            depends_on = step.get("depends_on", [])
-            for dep_id in depends_on:
-                if dep_id not in step_results:
-                    error_msg = f"Step {step_id} depends on step {dep_id} which hasn't been executed"
-                    logger.error(f"[PlanExecutor] {error_msg}")
-                    return {"error": error_msg}
-
-            # 根据步骤类型执行
-            if step_type == "sql_query":
-                result = await execute_sql_step(state, step, step_results)
-                step_results[step_id] = result
-
-            elif step_type == "python_analysis":
-                result = await execute_python_step(state, step, step_results)
-                step_results[step_id] = result
-
-            elif step_type == "report":
-                result = await execute_report_step(state, step, step_results)
-                step_results[step_id] = result
-
-            else:
-                logger.warning(f"[PlanExecutor] Unknown step type: {step_type}")
-                step_results[step_id] = {"error": f"Unknown step type: {step_type}"}
-
-        logger.info(f"[PlanExecutor] Plan execution completed")
-
-        # 汇总所有结果
-        final_result = {
-            "steps_executed": len(steps),
-            "step_results": step_results,
-            "final_data": step_results.get(steps[-1]["id"])  # 最后一步的结果
-        }
-
+    # 2. 检查 Human Review 开关 — 对齐 Java
+    human_review_enabled = state.get("human_review_enabled", False)
+    is_nl2sql = state.get("is_only_nl2sql", False)
+    if human_review_enabled and not is_nl2sql:
+        logger.info("[PlanExecutor] Human review enabled: routing to human_feedback node")
         return {
-            "plan_execution_result": final_result,
-            "sql_result": final_result.get("final_data", {}).get("data")
+            "plan_validation_status": True,
+            "plan_next_node": HUMAN_FEEDBACK_NODE,
         }
 
-    except Exception as e:
-        logger.error(f"[PlanExecutor] Error: {e}")
-        return {"error": f"Plan execution failed: {str(e)}"}
+    current_step = get_current_step_number(state)
+    total_steps = len(steps)
 
+    # 3. 检查是否所有步骤完成
+    if current_step > total_steps:
+        logger.info(f"[PlanExecutor] All {total_steps} steps completed, routing to report generator")
+        return {
+            "plan_current_step": 1,  # reset
+            "plan_next_node": REPORT_GENERATOR_NODE,
+            "plan_validation_status": True,
+        }
 
-async def execute_sql_step(
-    state: AgentState,
-    step: Dict[str, Any],
-    previous_results: Dict[int, Any]
-) -> Dict[str, Any]:
-    """执行 SQL 步骤"""
-    sql = step.get("sql")
-    if not sql:
-        return {"error": "No SQL provided"}
+    # 4. 获取当前步骤并决定下一节点
+    step = steps[current_step - 1]
+    # 兼容新旧格式
+    tool_to_use = step.get("tool_to_use") or step.get("type", "").upper()
+    # 旧格式映射
+    type_map = {"SQL_QUERY": SQL_GENERATE_NODE, "PYTHON_ANALYSIS": PYTHON_GENERATE_NODE, "REPORT": REPORT_GENERATOR_NODE}
+    tool_to_use = type_map.get(tool_to_use, tool_to_use)
 
-    # 创建临时状态执行 SQL
-    temp_state = {
-        **state,
-        "generated_sql": sql
-    }
-
-    # 调用 SQL 执行节点
-    result = await sql_execute_node(temp_state)
-
+    logger.info(f"[PlanExecutor] Step {current_step}/{total_steps} → {tool_to_use}")
     return {
-        "type": "sql_query",
-        "sql": sql,
-        "data": result.get("sql_result"),
-        "error": result.get("sql_error")
+        "plan_next_node": tool_to_use,
+        "plan_validation_status": True,
     }
 
 
-async def execute_python_step(
-    state: AgentState,
-    step: Dict[str, Any],
-    previous_results: Dict[int, Any]
-) -> Dict[str, Any]:
-    """
-    执行 Python 分析步骤
-
-    注意: Phase 3 会实现完整的 Python 执行
-    目前返回模拟结果
-    """
-    code = step.get("code", "")
-    depends_on = step.get("depends_on", [])
-
-    logger.info(f"[PlanExecutor] Python step - code length: {len(code)}")
-
-    # Phase 3 TODO: 实现真实的 Python 代码执行
-    # 目前返回描述性结果
+def _validation_failed(state: WorkflowState, error: str) -> Dict[str, Any]:
+    """校验失败处理 — 对齐 Java PlanExecutorNode.buildValidationResult"""
+    repair_count = state.get("plan_repair_count", 0)
     return {
-        "type": "python_analysis",
-        "code": code,
-        "description": step.get("description"),
-        "status": "pending",
-        "message": "Python execution will be implemented in Phase 3"
+        "plan_validation_status": False,
+        "plan_validation_error": error,
+        "plan_repair_count": repair_count + 1,
     }
 
 
-async def execute_report_step(
-    state: AgentState,
-    step: Dict[str, Any],
-    previous_results: Dict[int, Any]
-) -> Dict[str, Any]:
-    """执行报告生成步骤"""
-    depends_on = step.get("depends_on", [])
+# ========== 路由函数 (供 graph.py 的 conditional_edges 使用) ==========
 
-    # 收集所有依赖步骤的结果
-    collected_data = []
-    for dep_id in depends_on:
-        if dep_id in previous_results:
-            collected_data.append(previous_results[dep_id])
+MAX_REPAIR_ATTEMPTS = 3
 
-    # 生成简单报告
-    report = f"执行计划完成\n\n"
-    report += f"总共执行了 {len(previous_results)} 个步骤\n\n"
+def route_after_plan_executor(state: WorkflowState) -> Literal[
+    "sql_generate", "python_generate", "report_generator", "human_feedback", "planner", "end"
+]:
+    """PlanExecutor 后的条件路由 — 对齐 Java PlanExecutorDispatcher"""
+    validation_passed = state.get("plan_validation_status", False)
 
-    for step_id, result in previous_results.items():
-        step_type = result.get("type", "unknown")
-        report += f"步骤 {step_id} ({step_type}):\n"
+    if not validation_passed:
+        repair_count = state.get("plan_repair_count", 0)
+        if repair_count > MAX_REPAIR_ATTEMPTS:
+            logger.error(f"[PlanExecutor] Plan repair attempts exceeded {MAX_REPAIR_ATTEMPTS}, ending")
+            return "end"
+        logger.warning(f"[PlanExecutor] Validation failed, routing to planner for repair (attempt {repair_count})")
+        return "planner"
 
-        if result.get("error"):
-            report += f"  错误: {result['error']}\n"
-        elif result.get("data"):
-            data = result["data"]
-            if isinstance(data, list):
-                report += f"  返回 {len(data)} 条记录\n"
-            else:
-                report += f"  执行成功\n"
-        report += "\n"
+    next_node = state.get("plan_next_node", "")
 
-    return {
-        "type": "report",
-        "report": report,
-        "data": collected_data
+    node_map = {
+        SQL_GENERATE_NODE: "sql_generate",
+        PYTHON_GENERATE_NODE: "python_generate",
+        REPORT_GENERATOR_NODE: "report_generator",
+        HUMAN_FEEDBACK_NODE: "human_feedback",
     }
+    if next_node in node_map:
+        return node_map[next_node]
+
+    # 旧格式兼容
+    old_map = {"sql_query": "sql_generate", "python_analysis": "python_generate", "report": "report_generator"}
+    if next_node.lower() in old_map:
+        return old_map[next_node.lower()]
+
+    logger.warning(f"[PlanExecutor] Unknown next node: {next_node}, defaulting to report_generator")
+    return "report_generator"

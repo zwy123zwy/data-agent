@@ -1,74 +1,136 @@
 """
-工作流节点：SQL 执行
+SQL 执行节点（SQL Execute Node） — 对齐 Java SqlExecuteNode
+执行 SQL 并回写结果到执行计划，支持图表配置推荐
 """
+from typing import Dict, Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
-from ..state import WorkflowState
-from ...services.agent_datasource_service import AgentDatasourceService
-from ...core.database import async_session_maker
+from ..state import WorkflowState, get_current_step_number
+from ..services.agent_datasource_service import AgentDatasourceService
+from ..core.database import async_session_maker
+from ..core.config import settings
+import logging
+import json
+
+logger = logging.getLogger(__name__)
 
 
-async def sql_execute_node(state: WorkflowState) -> WorkflowState:
-    """
-    SQL 执行节点
+def _build_connection_url(datasource) -> str:
+    """构建数据库连接 URL"""
+    if datasource.type == "mysql":
+        return (
+            f"mysql+aiomysql://{datasource.username}:{datasource.password}"
+            f"@{datasource.host}:{datasource.port}/{datasource.database}"
+        )
+    elif datasource.type == "postgresql":
+        return (
+            f"postgresql+asyncpg://{datasource.username}:{datasource.password}"
+            f"@{datasource.host}:{datasource.port}/{datasource.database}"
+        )
+    elif datasource.type == "sqlite":
+        return datasource.connection_url or f"sqlite+aiosqlite:///{datasource.database}"
+    else:
+        raise ValueError(f"Unsupported database type: {datasource.type}")
 
-    执行生成的 SQL 语句并返回结果
+
+def _serialize_row(row, columns) -> Dict[str, Any]:
+    """将数据库行序列化为 JSON 兼容的 dict"""
+    result = {}
+    for i, col in enumerate(columns):
+        val = row[i]
+        if hasattr(val, 'isoformat'):
+            val = val.isoformat()
+        elif isinstance(val, (bytes, bytearray)):
+            val = str(val)
+        elif isinstance(val, (set, frozenset)):
+            val = list(val)
+        result[col] = val
+    return result
+
+
+async def sql_execute_node(state: WorkflowState) -> Dict[str, Any]:
+    """SQL 执行节点 — 对齐 Java SqlExecuteNode.apply()
+
+    1. 执行 SQL
+    2. 回写 sql_query 到当前步骤的 tool_parameters
+    3. 存储结果到 sql_result_list_memory (供 Python 节点使用)
+    4. 存储分步结果到 sql_step_results
     """
     agent_id = state["agent_id"]
     sql = state.get("generated_sql")
 
     if not sql:
-        state["error"] = "No SQL to execute"
-        return state
+        logger.warning("[SqlExecute] No SQL to execute")
+        return {"sql_error": "No SQL to execute"}
+
+    current_step = get_current_step_number(state)
+    logger.info(f"[SqlExecute] Step {current_step}: executing SQL ({len(sql)} chars)")
 
     try:
-        # 获取激活的数据源
         async with async_session_maker() as session:
             datasource = await AgentDatasourceService.get_active_datasource(session, agent_id)
-
             if not datasource:
-                state["error"] = "No active datasource found"
-                return state
+                return {"sql_error": "No active datasource found"}
 
-            # 构建数据库连接
-            if datasource.type == "mysql":
-                db_url = f"mysql+aiomysql://{datasource.username}:{datasource.password}@{datasource.host}:{datasource.port}/{datasource.database}"
-            elif datasource.type == "sqlite":
-                db_url = datasource.connection_url or f"sqlite+aiosqlite:///{datasource.database}"
-            else:
-                state["error"] = f"Unsupported database type: {datasource.type}"
-                return state
-
-            # 创建临时引擎执行查询
+            db_url = _build_connection_url(datasource)
             temp_engine = create_async_engine(db_url, echo=False)
 
             try:
                 async with temp_engine.connect() as conn:
                     result = await conn.execute(text(sql))
-
-                    # 将结果转换为字典列表
                     rows = result.fetchall()
-                    columns = result.keys()
+                    columns = list(result.keys())
 
-                    sql_result = []
-                    for row in rows:
-                        row_dict = {}
-                        for i, col in enumerate(columns):
-                            row_dict[col] = row[i]
-                        sql_result.append(row_dict)
+                    sql_result = [_serialize_row(row, columns) for row in rows]
+                    logger.info(f"[SqlExecute] Got {len(sql_result)} rows, {len(columns)} columns")
 
-                    state["sql_result"] = sql_result
-                    state["sql_error"] = None
+                    # 回写 SQL 到当前步骤的 tool_parameters
+                    plan = state.get("query_plan")
+                    if isinstance(plan, str):
+                        plan = json.loads(plan)
+                    if plan:
+                        steps = plan.get("execution_plan") or plan.get("steps", [])
+                        idx = current_step - 1
+                        if 0 <= idx < len(steps):
+                            tp = steps[idx].get("tool_parameters") or {}
+                            tp["sql_query"] = sql
+                            steps[idx]["tool_parameters"] = tp
+
+                    # 构建当前步骤的结果条目
+                    step_result_entry = {
+                        "step": current_step,
+                        "sql": sql,
+                        "result": sql_result,
+                        "columns": columns,
+                        "row_count": len(sql_result),
+                    }
+
+                    # 追加到 sql_result_list_memory — 对齐 Java
+                    result_list = list(state.get("sql_result_list_memory") or [])
+                    result_list.append(step_result_entry)
+
+                    # 构建分步结果 — 对齐 Java
+                    step_results = dict(state.get("sql_step_results") or {})
+                    step_results[f"step_{current_step}"] = {
+                        "sql": sql,
+                        "data": sql_result,
+                        "columns": columns,
+                    }
+
+                    return {
+                        "sql_result": sql_result,
+                        "sql_result_list_memory": result_list,
+                        "sql_step_results": step_results,
+                        "sql_error": None,
+                        "query_plan": json.dumps(plan, ensure_ascii=False) if plan else None,
+                    }
 
             finally:
                 await temp_engine.dispose()
 
     except Exception as e:
-        state["sql_error"] = str(e)
-        state["sql_result"] = None
-
-        # 增加重试计数
-        retry_count = state.get("sql_retry_count", 0)
-        state["sql_retry_count"] = retry_count + 1
-
-    return state
+        logger.error(f"[SqlExecute] Error: {e}")
+        return {
+            "sql_error": str(e),
+            "sql_regenerate_reason": {"type": "execute", "reason": str(e)},
+        }

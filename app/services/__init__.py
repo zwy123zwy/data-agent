@@ -7,6 +7,10 @@ from .agent_datasource_service import AgentDatasourceService
 from .knowledge_service import KnowledgeService
 from .semantic_model_service import SemanticModelService
 from .schema_service import SchemaService
+from .hybrid_search import HybridSearchService, get_hybrid_search_service
+from .multi_turn import MultiTurnContextManager, get_multi_turn_manager
+from .mcp_server import McpServerService, get_mcp_server_service
+from .langfuse_service import LangfuseService, get_langfuse_service
 
 __all__ = [
     "AgentService",
@@ -14,5 +18,13 @@ __all__ = [
     "AgentDatasourceService",
     "KnowledgeService",
     "SemanticModelService",
-    "SchemaService"
+    "SchemaService",
+    "HybridSearchService",
+    "get_hybrid_search_service",
+    "MultiTurnContextManager",
+    "get_multi_turn_manager",
+    "McpServerService",
+    "get_mcp_server_service",
+    "LangfuseService",
+    "get_langfuse_service",
 ]

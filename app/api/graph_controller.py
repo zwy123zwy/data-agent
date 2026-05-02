@@ -1,120 +1,131 @@
+"""
+同步查询 API — 对齐 Java GraphController (非流式)
+"""
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from langgraph.types import Command
 from ..core.database import get_db
 from ..schemas.query import QueryRequest, QueryResponse
 from ..workflows.graph import compiled_workflow
 from ..workflows.state import WorkflowState
-from ..core.workflow_controller import get_workflow_controller
-from ..models.human_feedback import HumanFeedback
+import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["查询执行"])
+
+
+def _build_initial_state(
+    agent_id: int,
+    user_query: str,
+    nl2sql_only: bool = False,
+    human_review: bool = False,
+    multi_turn_context: str = "",
+) -> WorkflowState:
+    return {
+        "agent_id": agent_id,
+        "user_query": user_query,
+        "is_only_nl2sql": nl2sql_only,
+        "human_review_enabled": human_review,
+        "multi_turn_context": multi_turn_context,
+        "sql_retry_count": 0,
+        "sql_generate_count": 0,
+        "python_tries_count": 0,
+        "plan_repair_count": 0,
+        "plan_current_step": 1,
+    }
 
 
 @router.post("/query", response_model=QueryResponse, summary="执行查询")
 async def execute_query(
     query_request: QueryRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    执行查询（核心接口）
+    """执行查询（核心接口）— 对齐 Java GraphController
 
-    工作流：
-    1. 意图识别 - 判断是否需要查询数据库
-    2. 数据库模式检索 - 获取表结构
-    3. SQL 生成 - 使用 LLM 生成 SQL
-    4. SQL 执行 - 执行查询
-    5. 报告生成 - 生成自然语言报告
+    工作流拓扑:
+    1. IntentRecognition → 意图识别
+    2. KnowledgeRecall → 知识召回
+    3. QueryRewrite → 查询改写
+    4. SchemaRecall → Schema 召回
+    5. TableRelation → 表关系构建
+    6. FeasibilityAssessment → 可行性评估
+    7. Planner → 计划生成
+    8. PlanExecutor → 循环调度 (SQL/Python/Report)
+    9. ReportGenerator → 报告生成
 
     - **agent_id**: Agent ID（必填）
     - **query**: 用户问题（必填）
-
-    返回：
-    - **intent**: 意图（data_analysis/chitchat）
-    - **sql**: 生成的 SQL（如果是数据分析）
-    - **result**: 查询结果（如果是数据分析）
-    - **report**: 分析报告
-    - **error**: 错误信息（如果有）
+    - **nl2sql_only**: 仅 NL2SQL 模式，跳过 Python 和报告
+    - **human_feedback**: 启用人工审批
     """
-    controller = get_workflow_controller()
+    # 恢复路径：携带 thread_id + feedback_content 时恢复 HumanFeedback
+    graph_input = _build_initial_state(
+        agent_id=query_request.agent_id,
+        user_query=query_request.query,
+        nl2sql_only=query_request.nl2sql_only,
+        human_review=query_request.human_feedback,
+    )
 
-    # 恢复路径：携带 workflow_id + feedback 时恢复执行
     if query_request.workflow_id and query_request.human_feedback_content:
-        feedback_data = {
-            "action": "reject" if query_request.rejected_plan else "approve",
-            "comment": query_request.human_feedback_content,
-            "modified_content": query_request.human_feedback_content if query_request.rejected_plan else None,
-        }
-        resumed = await controller.resume_workflow(query_request.workflow_id, feedback_data)
-        if not resumed:
-            raise HTTPException(status_code=400, detail="Workflow is not in paused state or not found")
-
-    # 暂停路径：启用人工反馈，先创建待审批任务
-    if query_request.human_feedback and not query_request.human_feedback_content:
-        workflow_id = controller.create_workflow(query_request.agent_id, query_request.query)
-        await controller.pause_workflow(workflow_id)
-        feedback = HumanFeedback(
-            workflow_id=workflow_id,
-            agent_id=query_request.agent_id,
-            node_name="human_feedback",
-            content=query_request.query,
-            status="pending",
+        action = "reject" if query_request.rejected_plan else "approve"
+        graph_input = Command(
+            resume={
+                "action": action,
+                "reason": query_request.human_feedback_content,
+            }
         )
-        db.add(feedback)
-        await db.commit()
-        return QueryResponse(
-            intent="data_analysis",
-            report="工作流已暂停，等待人工反馈",
-            workflow_id=workflow_id,
-            status="paused",
-        )
-
-    effective_query = query_request.query
-    if query_request.workflow_id:
-        feedback_data = controller.get_feedback_data(query_request.workflow_id) or {}
-        if feedback_data.get("modified_content"):
-            effective_query = feedback_data["modified_content"]
-        elif feedback_data.get("comment"):
-            effective_query = feedback_data["comment"]
-
-    # 构建初始状态
-    initial_state: WorkflowState = {
-        "agent_id": query_request.agent_id,
-        "user_query": effective_query,
-        "sql_retry_count": 0
-    }
 
     try:
-        # 执行工作流
-        final_state = await compiled_workflow.ainvoke(initial_state)
+        # 使用 ainvoke 执行完整工作流
+        config = (
+            {"configurable": {"thread_id": query_request.workflow_id}}
+            if query_request.workflow_id
+            else None
+        )
+        final_state = await compiled_workflow.ainvoke(graph_input, config)
 
-        # 构建响应
         intent = final_state.get("intent", "chitchat")
-
         if intent == "chitchat":
-            # 闲聊响应
-            if query_request.workflow_id:
-                await controller.complete_workflow(query_request.workflow_id)
             return QueryResponse(
                 intent=intent,
                 report="您好！我是数据分析助手，专门帮助您分析数据。请问有什么数据分析需求吗？",
-                workflow_id=query_request.workflow_id,
-                status="completed",
-            )
-        else:
-            # 数据分析响应
-            if query_request.workflow_id:
-                await controller.complete_workflow(query_request.workflow_id)
-            return QueryResponse(
-                intent=intent,
-                sql=final_state.get("generated_sql"),
-                result=final_state.get("sql_result"),
-                report=final_state.get("report"),
-                error=final_state.get("error"),
-                workflow_id=query_request.workflow_id,
                 status="completed",
             )
 
+        # 检查 HumanFeedback 暂停
+        feedback_data = final_state.get("human_feedback_data")
+        if feedback_data and isinstance(feedback_data, dict):
+            if feedback_data.get("type") == "human_feedback":
+                return QueryResponse(
+                    intent=intent,
+                    report="工作流暂停，等待人工审批",
+                    workflow_id=query_request.workflow_id,
+                    status="paused",
+                )
+
+        # 构建响应
+        report = final_state.get("report") or final_state.get("markdown_report", "")
+        plan = final_state.get("query_plan")
+        if isinstance(plan, str):
+            try:
+                plan = json.loads(plan)
+            except json.JSONDecodeError:
+                plan = None
+
+        return QueryResponse(
+            intent=intent,
+            sql=final_state.get("generated_sql"),
+            result=final_state.get("sql_result"),
+            report=report,
+            error=final_state.get("error"),
+            workflow_id=query_request.workflow_id,
+            status="completed",
+        )
+
     except Exception as e:
-        if query_request.workflow_id:
-            await controller.error_workflow(query_request.workflow_id, str(e))
-        raise HTTPException(status_code=500, detail=f"Query execution failed: {str(e)}")
+        logger.error(f"[GraphController] Error: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Query execution failed: {str(e)}"
+        )
