@@ -6,6 +6,7 @@ from ..schemas.agent import AgentCreate, AgentUpdate, AgentResponse, AgentListRe
 from ..services.agent_service import AgentService
 
 router = APIRouter(prefix="/api/agents", tags=["Agent管理"])
+legacy_router = APIRouter(prefix="/api/agent", tags=["Agent管理-兼容路径"])
 
 
 @router.post("", response_model=AgentResponse, status_code=201, summary="创建Agent")
@@ -125,3 +126,43 @@ async def offline_agent(
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     return agent
+
+
+@legacy_router.get("/list", response_model=AgentListResponse, include_in_schema=False)
+async def list_agents_legacy(
+    status: Optional[str] = Query(None, description="状态过滤: draft/published/offline"),
+    skip: int = Query(0, ge=0, description="分页偏移"),
+    limit: int = Query(100, ge=1, le=1000, description="每页数量"),
+    db: AsyncSession = Depends(get_db),
+):
+    return await list_agents(status=status, skip=skip, limit=limit, db=db)
+
+
+@legacy_router.get("/{agent_id}", response_model=AgentResponse, include_in_schema=False)
+async def get_agent_legacy(agent_id: int, db: AsyncSession = Depends(get_db)):
+    return await get_agent(agent_id=agent_id, db=db)
+
+
+@legacy_router.post("", response_model=AgentResponse, status_code=201, include_in_schema=False)
+async def create_agent_legacy(agent_data: AgentCreate, db: AsyncSession = Depends(get_db)):
+    return await create_agent(agent_data=agent_data, db=db)
+
+
+@legacy_router.put("/{agent_id}", response_model=AgentResponse, include_in_schema=False)
+async def update_agent_legacy(agent_id: int, agent_data: AgentUpdate, db: AsyncSession = Depends(get_db)):
+    return await update_agent(agent_id=agent_id, agent_data=agent_data, db=db)
+
+
+@legacy_router.delete("/{agent_id}", status_code=204, include_in_schema=False)
+async def delete_agent_legacy(agent_id: int, db: AsyncSession = Depends(get_db)):
+    return await delete_agent(agent_id=agent_id, db=db)
+
+
+@legacy_router.post("/{agent_id}/publish", response_model=AgentResponse, include_in_schema=False)
+async def publish_agent_legacy(agent_id: int, db: AsyncSession = Depends(get_db)):
+    return await publish_agent(agent_id=agent_id, db=db)
+
+
+@legacy_router.post("/{agent_id}/offline", response_model=AgentResponse, include_in_schema=False)
+async def offline_agent_legacy(agent_id: int, db: AsyncSession = Depends(get_db)):
+    return await offline_agent(agent_id=agent_id, db=db)

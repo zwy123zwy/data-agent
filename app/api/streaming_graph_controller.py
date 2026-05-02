@@ -2,7 +2,7 @@
 流式查询 API
 使用 SSE (Server-Sent Events) 实现流式输出
 """
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.database import get_db
@@ -11,6 +11,8 @@ from ..workflows.graph import compiled_workflow
 from ..workflows.state import WorkflowState
 from ..services.agent_service import AgentService
 from ..services.agent_datasource_service import AgentDatasourceService
+from ..core.workflow_controller import get_workflow_controller
+from ..models.human_feedback import HumanFeedback
 import json
 import logging
 
@@ -22,7 +24,11 @@ router = APIRouter(prefix="/api", tags=["流式查询"])
 async def stream_workflow_execution(
     agent_id: int,
     user_query: str,
-    db: AsyncSession
+    db: AsyncSession,
+    workflow_id: str | None = None,
+    human_feedback: bool = False,
+    human_feedback_content: str | None = None,
+    rejected_plan: bool = False,
 ):
     """
     流式执行工作流
@@ -31,18 +37,56 @@ async def stream_workflow_execution(
         SSE 格式的事件流
     """
     try:
+        controller = get_workflow_controller()
+
+        # 暂停路径：创建人工反馈任务并返回 paused 事件
+        if human_feedback and not human_feedback_content:
+            workflow_id = controller.create_workflow(agent_id, user_query)
+            await controller.pause_workflow(workflow_id)
+            feedback = HumanFeedback(
+                workflow_id=workflow_id,
+                agent_id=agent_id,
+                node_name="human_feedback",
+                content=user_query,
+                status="pending",
+            )
+            db.add(feedback)
+            await db.commit()
+            yield f"event: paused\ndata: {json.dumps({'workflow_id': workflow_id, 'message': '工作流已暂停，等待人工反馈'})}\n\n"
+            return
+
+        # 恢复路径：写入反馈并恢复
+        if workflow_id and human_feedback_content:
+            feedback_data = {
+                "action": "reject" if rejected_plan else "approve",
+                "comment": human_feedback_content,
+                "modified_content": human_feedback_content if rejected_plan else None,
+            }
+            resumed = await controller.resume_workflow(workflow_id, feedback_data)
+            if not resumed:
+                yield f"event: error\ndata: {json.dumps({'error': 'Workflow is not in paused state or not found'})}\n\n"
+                return
+            if feedback_data.get("modified_content"):
+                user_query = feedback_data["modified_content"]
+            elif feedback_data.get("comment"):
+                user_query = feedback_data["comment"]
+
         # 发送开始事件
-        yield f"event: start\ndata: {json.dumps({'message': '开始处理查询'})}\n\n"
+        yield f"event: start\ndata: {json.dumps({'message': '开始处理查询', 'workflow_id': workflow_id})}\n\n"
 
         # 检查 Agent 是否存在
         agent = await AgentService.get_agent(db, agent_id)
         if not agent:
+            if workflow_id:
+                await controller.error_workflow(workflow_id, "Agent 不存在")
             yield f"event: error\ndata: {json.dumps({'error': 'Agent 不存在'})}\n\n"
             return
 
         # 检查是否有激活的数据源
         active_datasource = await AgentDatasourceService.get_active_datasource(db, agent_id)
         if not active_datasource:
+            if workflow_id:
+                await controller.error_workflow(workflow_id, "没有激活的数据源")
             yield f"event: error\ndata: {json.dumps({'error': '没有激活的数据源'})}\n\n"
             return
 
@@ -96,10 +140,14 @@ async def stream_workflow_execution(
                         yield f"event: report\ndata: {json.dumps({'report': report})}\n\n"
 
         # 发送完成事件
+        if workflow_id:
+            await controller.complete_workflow(workflow_id)
         yield f"event: done\ndata: {json.dumps({'message': '查询完成'})}\n\n"
 
     except Exception as e:
         logger.error(f"[Stream] Error: {e}")
+        if workflow_id:
+            await controller.error_workflow(workflow_id, str(e))
         yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
 
 
@@ -130,7 +178,11 @@ async def stream_query(
         stream_workflow_execution(
             agent_id=query_request.agent_id,
             user_query=query_request.query,
-            db=db
+            db=db,
+            workflow_id=query_request.workflow_id,
+            human_feedback=query_request.human_feedback,
+            human_feedback_content=query_request.human_feedback_content,
+            rejected_plan=query_request.rejected_plan,
         ),
         media_type="text/event-stream",
         headers={
@@ -138,4 +190,36 @@ async def stream_query(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no"  # 禁用 Nginx 缓冲
         }
+    )
+
+
+@router.get("/stream/search")
+async def stream_search_legacy(
+    agentId: int = Query(..., description="Agent ID"),
+    query: str = Query(..., min_length=1, description="用户问题"),
+    threadId: str | None = Query(None, description="会话线程ID"),
+    humanFeedback: bool = Query(False, description="是否启用人工反馈"),
+    humanFeedbackContent: str | None = Query(None, description="人工反馈内容"),
+    rejectedPlan: bool = Query(False, description="是否拒绝计划"),
+    nl2sqlOnly: bool = Query(False, description="仅nl2sql（当前未启用）"),
+    db: AsyncSession = Depends(get_db),
+):
+    """兼容 Java 路径: GET /api/stream/search"""
+    _ = nl2sqlOnly  # 保留参数兼容，当前版本暂不使用
+    return StreamingResponse(
+        stream_workflow_execution(
+            agent_id=agentId,
+            user_query=query,
+            db=db,
+            workflow_id=threadId,
+            human_feedback=humanFeedback,
+            human_feedback_content=humanFeedbackContent,
+            rejected_plan=rejectedPlan,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )

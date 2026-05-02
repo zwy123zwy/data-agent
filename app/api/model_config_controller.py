@@ -3,7 +3,8 @@
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List, Optional
+from typing import List, Optional, Any
+from pydantic import BaseModel
 from ..core.database import get_db
 from ..core.model_registry import get_model_registry, ModelRegistry
 from ..schemas.model_config import (
@@ -14,6 +15,17 @@ from ..schemas.model_config import (
 )
 
 router = APIRouter()
+legacy_router = APIRouter(prefix="/api/model-config", tags=["模型配置-兼容路径"])
+
+
+class ModelUpdateRequest(BaseModel):
+    id: int
+    data: ModelConfigUpdate
+
+
+class ModelTestLegacyRequest(BaseModel):
+    model_id: int
+    prompt: str = "Hello, how are you?"
 
 
 @router.post("/models", response_model=ModelConfigResponse, summary="创建模型配置")
@@ -102,3 +114,46 @@ async def test_model(
     registry = get_model_registry(db)
     result = await registry.test_model(model_id, request.prompt)
     return result
+
+
+@legacy_router.get("/list", response_model=List[ModelConfigResponse], include_in_schema=False)
+async def list_models_legacy(
+    type: Optional[str] = None,
+    enabled: Optional[bool] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    return await list_models(type=type, enabled=enabled, db=db)
+
+
+@legacy_router.post("/add", response_model=ModelConfigResponse, include_in_schema=False)
+async def add_model_legacy(config: ModelConfigCreate, db: AsyncSession = Depends(get_db)):
+    return await create_model(config=config, db=db)
+
+
+@legacy_router.put("/update", response_model=ModelConfigResponse, include_in_schema=False)
+async def update_model_legacy(payload: ModelUpdateRequest, db: AsyncSession = Depends(get_db)):
+    return await update_model(model_id=payload.id, update_data=payload.data, db=db)
+
+
+@legacy_router.delete("/{id}", include_in_schema=False)
+async def delete_model_legacy(id: int, db: AsyncSession = Depends(get_db)):
+    return await delete_model(model_id=id, db=db)
+
+
+@legacy_router.post("/activate/{id}", response_model=ModelConfigResponse, include_in_schema=False)
+async def activate_model_legacy(id: int, db: AsyncSession = Depends(get_db)):
+    return await set_default_model(model_id=id, db=db)
+
+
+@legacy_router.post("/test", include_in_schema=False)
+async def test_model_legacy(payload: ModelTestLegacyRequest, db: AsyncSession = Depends(get_db)):
+    req = ModelTestRequest(prompt=payload.prompt)
+    return await test_model(model_id=payload.model_id, request=req, db=db)
+
+
+@legacy_router.get("/check-ready", include_in_schema=False)
+async def check_ready_legacy(db: AsyncSession = Depends(get_db)):
+    registry = get_model_registry(db)
+    chat = await registry.get_default_model("chat")
+    embedding = await registry.get_default_model("embedding")
+    return {"ready": bool(chat), "chatReady": bool(chat), "embeddingReady": bool(embedding)}

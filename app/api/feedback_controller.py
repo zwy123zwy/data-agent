@@ -9,12 +9,30 @@ from ..core.database import get_db
 from ..core.workflow_controller import get_workflow_controller
 from ..models.human_feedback import HumanFeedback
 from ..schemas.human_feedback import (
-    HumanFeedbackCreate,
     HumanFeedbackSubmit,
     HumanFeedbackResponse
 )
 
 router = APIRouter()
+
+
+@router.get("/workflows/{workflow_id}/status", summary="获取工作流状态")
+async def get_workflow_status(workflow_id: str):
+    """获取工作流实时状态"""
+    controller = get_workflow_controller()
+    workflow = controller.get_workflow(workflow_id)
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    return {
+        "workflow_id": workflow.workflow_id,
+        "agent_id": workflow.agent_id,
+        "status": workflow.status,
+        "current_node": workflow.current_node,
+        "query": workflow.query,
+        "feedback_data": workflow.feedback_data,
+        "created_at": workflow.created_at.isoformat(),
+        "updated_at": workflow.updated_at.isoformat(),
+    }
 
 
 @router.get("/feedback/pending", response_model=List[HumanFeedbackResponse], summary="获取待审批任务")
@@ -73,7 +91,9 @@ async def submit_feedback(
         "comment": submit.comment,
         "modified_content": submit.modified_content
     }
-    await controller.resume_workflow(workflow_id, feedback_data)
+    resumed = await controller.resume_workflow(workflow_id, feedback_data)
+    if not resumed:
+        raise HTTPException(status_code=400, detail="Workflow is not in paused state or not found")
 
     return feedback
 

@@ -17,6 +17,7 @@ from ..schemas.semantic_model import (
 )
 
 router = APIRouter(prefix="/api/agents/{agent_id}/semantic-models", tags=["SemanticModel"])
+legacy_router = APIRouter(prefix="/api/semantic-model", tags=["SemanticModel-兼容路径"])
 
 
 @router.post("", response_model=SemanticModelResponse, status_code=201)
@@ -130,3 +131,59 @@ async def search_semantic_models(
 
     results = await SemanticModelService.search_semantic_models(db, agent_id, search_request)
     return results
+
+
+@legacy_router.get("", response_model=dict, include_in_schema=False)
+async def list_semantic_models_legacy(
+    agentId: int = Query(..., description="Agent ID"),
+    datasource_id: int = Query(None, description="数据源ID过滤"),
+    table_name: str = Query(None, description="表名过滤"),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    return await list_semantic_models(
+        agent_id=agentId,
+        datasource_id=datasource_id,
+        table_name=table_name,
+        page=page,
+        size=size,
+        db=db,
+    )
+
+
+@legacy_router.get("/{id}", response_model=SemanticModelResponse, include_in_schema=False)
+async def get_semantic_model_legacy(
+    id: int,
+    agentId: int = Query(..., description="Agent ID"),
+    db: AsyncSession = Depends(get_db),
+):
+    return await get_semantic_model(agent_id=agentId, model_id=id, db=db)
+
+
+@legacy_router.post("", response_model=SemanticModelResponse, status_code=201, include_in_schema=False)
+async def create_semantic_model_legacy(
+    model_data: SemanticModelCreate,
+    agentId: int = Query(..., description="Agent ID"),
+    db: AsyncSession = Depends(get_db),
+):
+    return await create_semantic_model(agent_id=agentId, model_data=model_data, db=db)
+
+
+@legacy_router.put("/{id}", response_model=SemanticModelResponse, include_in_schema=False)
+async def update_semantic_model_legacy(
+    id: int,
+    model_data: SemanticModelUpdate,
+    agentId: int = Query(..., description="Agent ID"),
+    db: AsyncSession = Depends(get_db),
+):
+    return await update_semantic_model(agent_id=agentId, model_id=id, model_data=model_data, db=db)
+
+
+@legacy_router.delete("/{id}", status_code=204, include_in_schema=False)
+async def delete_semantic_model_legacy(
+    id: int,
+    agentId: int = Query(..., description="Agent ID"),
+    db: AsyncSession = Depends(get_db),
+):
+    return await delete_semantic_model(agent_id=agentId, model_id=id, db=db)

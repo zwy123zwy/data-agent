@@ -10,8 +10,10 @@ from ..schemas.datasource import (
     DatasourceTestResponse
 )
 from ..services.datasource_service import DatasourceService
+from ..services.schema_service import SchemaService
 
 router = APIRouter(prefix="/api/datasources", tags=["Datasource管理"])
+legacy_router = APIRouter(prefix="/api/datasource", tags=["Datasource管理-兼容路径"])
 
 
 @router.post("", response_model=DatasourceResponse, status_code=201, summary="创建数据源")
@@ -128,3 +130,71 @@ async def test_datasource(
         message=message,
         test_status=test_status
     )
+
+
+@legacy_router.get("/types", include_in_schema=False)
+async def list_datasource_types_legacy():
+    return [
+        {"value": "mysql", "label": "MySQL"},
+        {"value": "postgresql", "label": "PostgreSQL"},
+        {"value": "sqlite", "label": "SQLite"},
+    ]
+
+
+@legacy_router.get("", response_model=DatasourceListResponse, include_in_schema=False)
+async def list_datasources_legacy(
+    type: Optional[str] = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+):
+    return await list_datasources(type=type, skip=skip, limit=limit, db=db)
+
+
+@legacy_router.get("/{datasource_id}", response_model=DatasourceResponse, include_in_schema=False)
+async def get_datasource_legacy(datasource_id: int, db: AsyncSession = Depends(get_db)):
+    return await get_datasource(datasource_id=datasource_id, db=db)
+
+
+@legacy_router.post("", response_model=DatasourceResponse, status_code=201, include_in_schema=False)
+async def create_datasource_legacy(datasource_data: DatasourceCreate, db: AsyncSession = Depends(get_db)):
+    return await create_datasource(datasource_data=datasource_data, db=db)
+
+
+@legacy_router.put("/{datasource_id}", response_model=DatasourceResponse, include_in_schema=False)
+async def update_datasource_legacy(
+    datasource_id: int,
+    datasource_data: DatasourceUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    return await update_datasource(datasource_id=datasource_id, datasource_data=datasource_data, db=db)
+
+
+@legacy_router.delete("/{datasource_id}", status_code=204, include_in_schema=False)
+async def delete_datasource_legacy(datasource_id: int, db: AsyncSession = Depends(get_db)):
+    return await delete_datasource(datasource_id=datasource_id, db=db)
+
+
+@legacy_router.post("/{datasource_id}/test", response_model=DatasourceTestResponse, include_in_schema=False)
+async def test_datasource_legacy(datasource_id: int, db: AsyncSession = Depends(get_db)):
+    return await test_datasource(datasource_id=datasource_id, db=db)
+
+
+@legacy_router.get("/{datasource_id}/tables", include_in_schema=False)
+async def list_tables_legacy(datasource_id: int, db: AsyncSession = Depends(get_db)):
+    datasource = await DatasourceService.get_datasource(db, datasource_id)
+    if not datasource:
+        raise HTTPException(status_code=404, detail="Datasource not found")
+    schema = await SchemaService.get_database_schema(datasource)
+    return [{"name": table["name"], "comment": table.get("comment", "")} for table in schema["tables"]]
+
+
+@legacy_router.get("/{datasource_id}/tables/{table_name}/columns", include_in_schema=False)
+async def list_columns_legacy(datasource_id: int, table_name: str, db: AsyncSession = Depends(get_db)):
+    datasource = await DatasourceService.get_datasource(db, datasource_id)
+    if not datasource:
+        raise HTTPException(status_code=404, detail="Datasource not found")
+    schema = await SchemaService.get_database_schema(datasource, [table_name])
+    if not schema["tables"]:
+        raise HTTPException(status_code=404, detail="Table not found")
+    return schema["tables"][0].get("columns", [])

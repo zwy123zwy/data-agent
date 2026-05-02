@@ -95,3 +95,16 @@
 7. **业务成功响应统一化（阶段一）**
    - 新增 `SuccessResponse`（`success/message/data`）能力模型
    - 说明：为避免影响现有前端，本次已按兼容策略回退 `agent_controller` 与 `query_plan_controller` 的成功响应结构，保持原契约不变
+
+8. **人工反馈最小闭环打通（query/query-stream）**
+   - `QueryRequest` 新增 `workflow_id/human_feedback/human_feedback_content/rejected_plan` 字段
+   - `/api/query` 支持：
+     - `human_feedback=true` 时创建并暂停工作流，落库 `HumanFeedback(pending)`，返回 `workflow_id`
+     - 携带 `workflow_id + human_feedback_content` 时恢复工作流并继续执行
+   - `/api/query/stream` 支持同样的暂停/恢复逻辑，暂停时返回 `paused` SSE 事件与 `workflow_id`
+   - `/feedback/{workflow_id}` 在工作流非 paused 状态下返回 400，避免“反馈提交成功但实际未恢复”的假成功
+
+9. **工作流状态可观测能力补齐**
+   - 新增 `GET /workflows/{workflow_id}/status`，返回 `status/current_node/feedback_data` 等实时状态
+   - `/api/query` 在执行成功时将工作流标记为 `completed`，异常时标记为 `error`
+   - `/api/query/stream` 在完成/异常/前置校验失败时同步更新工作流状态
