@@ -4,11 +4,10 @@
 """
 from typing import Dict, Any
 from ..state import WorkflowState, get_canonical_query
-from ...core.llm import get_llm_client
-from ...core.config import settings
+from ...core.llm import llm_service
+from ...core.text_utils import clean_code_block
 import logging
 import json
-import re
 
 logger = logging.getLogger(__name__)
 
@@ -79,15 +78,6 @@ PLANNER_SYSTEM_PROMPT = """你是一个数据分析计划生成专家。
 """
 
 
-def _clean_json(text: str) -> str:
-    """清理 LLM 返回的 JSON 文本"""
-    text = text.strip()
-    text = re.sub(r'^```json\s*', '', text)
-    text = re.sub(r'^```\s*', '', text)
-    text = re.sub(r'\s*```$', '', text)
-    return text.strip()
-
-
 def _build_user_prompt(canonical_query: str, validation_error: str | None,
                        state: WorkflowState) -> str:
     """构建用户提示 — 对齐 Java PlannerNode.buildUserPrompt"""
@@ -129,8 +119,6 @@ async def planner_node(state: WorkflowState) -> Dict[str, Any]:
     user_prompt = _build_user_prompt(canonical_query, validation_error, state)
 
     try:
-        llm = get_llm_client()
-
         system_prompt = PLANNER_SYSTEM_PROMPT
         if validation_error:
             system_prompt += (
@@ -146,16 +134,8 @@ async def planner_node(state: WorkflowState) -> Dict[str, Any]:
             f"请生成执行计划。"
         )
 
-        response = await llm.chat.completions.create(
-            model=settings.openai_model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": full_user_prompt}
-            ],
-            temperature=0.0,
-        )
-
-        plan_text = _clean_json(response.choices[0].message.content)
+        response = await llm_service.chat(system_prompt, full_user_prompt, temperature=0.0)
+        plan_text = clean_code_block(response, lang="json")
         plan = json.loads(plan_text)
 
         # 校验 Plan 结构

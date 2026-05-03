@@ -4,10 +4,10 @@ Python 代码生成节点（Python Generate Node） — 对齐 Java PythonGenera
 """
 from typing import Dict, Any
 from ..state import WorkflowState, get_canonical_query, get_current_instruction
-from ...core.llm import get_llm_client
+from ...core.llm import llm_service
 from ...core.config import settings
+from ...core.text_utils import clean_code_block
 import logging
-import re
 
 logger = logging.getLogger(__name__)
 
@@ -54,15 +54,6 @@ PYTHON_RETRY_PROMPT = """上次生成的代码执行失败，请根据错误信�
 """
 
 
-def _clean_code(text: str) -> str:
-    """清理 Python 代码"""
-    text = text.strip()
-    text = re.sub(r'^```python\s*', '', text)
-    text = re.sub(r'^```\s*', '', text)
-    text = re.sub(r'\s*```$', '', text)
-    return text.strip()
-
-
 def _get_sample_data(state: WorkflowState, max_rows: int = 5) -> str:
     """获取 SQL 结果的前几条样本数据"""
     sql_result = state.get("sql_result")
@@ -88,8 +79,6 @@ async def python_generate_node(state: WorkflowState) -> Dict[str, Any]:
     tries_count = state.get("python_tries_count", 0)
     is_retry = last_code and last_error and tries_count > 0
 
-    llm = get_llm_client()
-
     if is_retry:
         # === 重试模式 ===
         logger.info(f"[PythonGenerate] Retry {tries_count}/{settings.code_executor.python_max_tries_count}")
@@ -101,18 +90,12 @@ async def python_generate_node(state: WorkflowState) -> Dict[str, Any]:
         )
 
         try:
-            response = await llm.chat.completions.create(
-                model=settings.openai_model,
-                messages=[
-                    {"role": "system", "content": PYTHON_GENERATION_SYSTEM_PROMPT.format(
-                        limit_memory=settings.code_executor.limit_memory,
-                        code_timeout=settings.code_executor.code_timeout,
-                    )},
-                    {"role": "user", "content": retry_prompt},
-                ],
-                temperature=0.0,
+            system_msg = PYTHON_GENERATION_SYSTEM_PROMPT.format(
+                limit_memory=settings.code_executor.limit_memory,
+                code_timeout=settings.code_executor.code_timeout,
             )
-            code = _clean_code(response.choices[0].message.content.strip())
+            code = await llm_service.chat(system_msg, retry_prompt, temperature=0.0)
+            code = clean_code_block(code, lang="python")
             logger.info(f"[PythonGenerate] Retry code: {len(code)} chars")
             return {"python_code": code, "python_error": None}
         except Exception as e:
@@ -152,18 +135,12 @@ async def python_generate_node(state: WorkflowState) -> Dict[str, Any]:
         )
 
         try:
-            response = await llm.chat.completions.create(
-                model=settings.openai_model,
-                messages=[
-                    {"role": "system", "content": PYTHON_GENERATION_SYSTEM_PROMPT.format(
-                        limit_memory=settings.code_executor.limit_memory,
-                        code_timeout=settings.code_executor.code_timeout,
-                    )},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.0,
+            system_msg = PYTHON_GENERATION_SYSTEM_PROMPT.format(
+                limit_memory=settings.code_executor.limit_memory,
+                code_timeout=settings.code_executor.code_timeout,
             )
-            code = _clean_code(response.choices[0].message.content.strip())
+            code = await llm_service.chat(system_msg, prompt, temperature=0.0)
+            code = clean_code_block(code, lang="python")
             logger.info(f"[PythonGenerate] Generated {len(code)} chars of code")
             return {"python_code": code}
         except Exception as e:

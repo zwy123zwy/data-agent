@@ -17,6 +17,7 @@ class DatasourceCreate(DatasourceBase):
     username: Optional[str] = Field(None, max_length=100, description="用户名")
     password: Optional[str] = Field(None, max_length=255, description="密码")
     connection_url: Optional[str] = Field(None, max_length=500, description="连接字符串（SQLite）")
+    description: Optional[str] = Field(None, description="数据源描述")
 
     @field_validator("type")
     @classmethod
@@ -36,6 +37,8 @@ class DatasourceUpdate(BaseModel):
     username: Optional[str] = Field(None, max_length=100, description="用户名")
     password: Optional[str] = Field(None, max_length=255, description="密码")
     connection_url: Optional[str] = Field(None, max_length=500, description="连接字符串")
+    description: Optional[str] = Field(None, description="数据源描述")
+    status: Optional[str] = Field(None, pattern="^(active|inactive|deleted)$", description="通用状态")
 
 
 class DatasourceResponse(DatasourceBase):
@@ -45,7 +48,10 @@ class DatasourceResponse(DatasourceBase):
     port: Optional[int] = None
     username: Optional[str] = None
     connection_url: Optional[str] = None
+    status: str = "active"
     test_status: str
+    description: Optional[str] = None
+    creator_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 

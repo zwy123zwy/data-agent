@@ -11,7 +11,9 @@ class AgentBase(BaseModel):
 
 class AgentCreate(AgentBase):
     """创建 Agent 请求"""
-    pass
+    category: Optional[str] = Field(None, max_length=100, description="分类")
+    prompt: Optional[str] = Field(None, description="自定义Prompt")
+    admin_id: Optional[int] = Field(None, description="管理员ID")
 
 
 class AgentUpdate(BaseModel):
@@ -21,6 +23,9 @@ class AgentUpdate(BaseModel):
     status: Optional[str] = Field(None, pattern="^(draft|published|offline)$", description="状态")
     avatar: Optional[str] = Field(None, max_length=255, description="头像URL")
     tags: Optional[str] = Field(None, max_length=500, description="标签")
+    category: Optional[str] = Field(None, max_length=100, description="分类")
+    prompt: Optional[str] = Field(None, description="自定义Prompt")
+    admin_id: Optional[int] = Field(None, description="管理员ID")
 
 
 class AgentResponse(AgentBase):
@@ -30,6 +35,9 @@ class AgentResponse(AgentBase):
     avatar: Optional[str] = None
     tags: Optional[str] = None
     api_key_enabled: bool = False
+    category: Optional[str] = None
+    prompt: Optional[str] = None
+    admin_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 

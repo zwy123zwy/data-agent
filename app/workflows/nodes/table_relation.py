@@ -4,8 +4,8 @@
 """
 from typing import Dict, Any, List, Optional
 from ..state import WorkflowState
-from ...core.llm import get_llm_client
-from ...core.config import settings
+from ...core.llm import llm_service
+from ...core.text_utils import clean_code_block
 from ...services.schema_service import SchemaService
 from ...services.agent_datasource_service import AgentDatasourceService
 from ...core.database import async_session_maker
@@ -93,26 +93,14 @@ async def _llm_enhance_relations(
 ) -> Dict[str, Any]:
     """LLM 增强关系推理"""
     try:
-        llm = get_llm_client()
         prompt = (
             f"数据库 Schema:\n{schema_text}\n\n"
             f"已发现的外键关系:\n{json.dumps(explicit_fks, ensure_ascii=False, indent=2)}\n\n"
             f"已发现的同名字段关系:\n{json.dumps(implicit_rels, ensure_ascii=False, indent=2)}\n\n"
             f"请分析并返回完整的表关系 JSON。"
         )
-        response = await llm.chat.completions.create(
-            model=settings.openai_model,
-            messages=[
-                {"role": "system", "content": TABLE_RELATION_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.0,
-        )
-        text = response.choices[0].message.content.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1] if text.startswith("```json") else text[3:]
-            text = text.rsplit("```", 1)[0]
-        return json.loads(text)
+        text = await llm_service.chat(TABLE_RELATION_SYSTEM_PROMPT, prompt, temperature=0.0)
+        return json.loads(clean_code_block(text, lang="json"))
     except Exception as e:
         logger.warning(f"[TableRelation] LLM enhancement failed: {e}, using basic relations")
         return {}

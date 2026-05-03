@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Integer, DateTime
+from sqlalchemy import String, Integer, DateTime, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from ..core.database import Base
 
@@ -30,12 +30,22 @@ class Datasource(Base):
     )
 
     # 状态
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="active",
+        comment="通用状态: active/inactive/deleted"
+    )
     test_status: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
         default="untested",
         comment="测试状态: untested/success/failed"
     )
+
+    # 扩展字段
+    description: Mapped[Optional[str]] = mapped_column(Text, comment="数据源描述")
+    creator_id: Mapped[Optional[int]] = mapped_column(Integer, comment="创建者ID")
 
     # 时间戳
     created_at: Mapped[datetime] = mapped_column(

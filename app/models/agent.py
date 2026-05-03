@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional
 from sqlalchemy import String, Text, DateTime, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from ..core.database import Base
@@ -20,11 +20,14 @@ class Agent(Base):
         comment="状态: draft/published/offline"
     )
 
-    # 扩展字段（对齐Java版本，Phase 1暂不使用）
+    # 扩展字段（对齐Java版本）
     avatar: Mapped[Optional[str]] = mapped_column(String(255), comment="头像URL")
     tags: Mapped[Optional[str]] = mapped_column(String(500), comment="标签，逗号分隔")
     api_key: Mapped[Optional[str]] = mapped_column(String(64), comment="API Key")
     api_key_enabled: Mapped[bool] = mapped_column(default=False, comment="API Key是否启用")
+    prompt: Mapped[Optional[str]] = mapped_column(Text, comment="Agent自定义Prompt")
+    category: Mapped[Optional[str]] = mapped_column(String(100), comment="分类")
+    admin_id: Mapped[Optional[int]] = mapped_column(Integer, comment="管理员ID")
 
     # 时间戳
     created_at: Mapped[datetime] = mapped_column(
@@ -40,12 +43,6 @@ class Agent(Base):
         onupdate=datetime.utcnow,
         comment="更新时间"
     )
-
-    # 关系（Phase 1 暂不使用，为后续扩展预留）
-    # datasources: Mapped[List["AgentDatasource"]] = relationship(
-    #     back_populates="agent",
-    #     cascade="all, delete-orphan"
-    # )
 
     def __repr__(self):
         return f"<Agent(id={self.id}, name='{self.name}', status='{self.status}')>"

@@ -4,8 +4,9 @@ LLM 动态报告 + ECharts 图表配置推荐 + 步骤结果聚合
 """
 from typing import Dict, Any
 from ..state import WorkflowState, get_canonical_query
-from ...core.llm import get_llm_client
+from ...core.llm import llm_service
 from ...core.config import settings
+from ...core.text_utils import clean_code_block
 import logging
 import json
 from datetime import datetime
@@ -134,7 +135,6 @@ async def _recommend_chart(sql_result: list) -> Dict[str, Any] | None:
         return None
 
     try:
-        llm = get_llm_client()
         sample = sql_result[:5]
         columns = list(sql_result[0].keys()) if sql_result else []
 
@@ -145,20 +145,8 @@ async def _recommend_chart(sql_result: list) -> Dict[str, Any] | None:
             f"请推荐最合适的 ECharts 图表配置。"
         )
 
-        response = await llm.chat.completions.create(
-            model=settings.openai_model,
-            messages=[
-                {"role": "system", "content": CHART_RECOMMEND_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.0,
-        )
-
-        text = response.choices[0].message.content.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1]
-            text = text.rsplit("```", 1)[0]
-        return json.loads(text)
+        text = await llm_service.chat(CHART_RECOMMEND_SYSTEM_PROMPT, prompt, temperature=0.0)
+        return json.loads(clean_code_block(text, lang="json"))
 
     except Exception as e:
         logger.warning(f"[ReportGenerator] Chart recommendation failed: {e}")
@@ -193,8 +181,6 @@ async def report_generator_node(state: WorkflowState) -> Dict[str, Any]:
         thought = plan.get("thought_process", "")
 
     try:
-        llm = get_llm_client()
-
         # 构建报告上下文
         context_parts = [
             f"用户查询: {user_query}",
@@ -221,16 +207,12 @@ async def report_generator_node(state: WorkflowState) -> Dict[str, Any]:
         context = "\n\n".join(context_parts)
 
         # LLM 动态生成报告
-        response = await llm.chat.completions.create(
-            model=settings.openai_model,
-            messages=[
-                {"role": "system", "content": REPORT_SYSTEM_PROMPT},
-                {"role": "user", "content": f"分析上下文:\n{context}\n\n请生成完整的 Markdown 分析报告。"},
-            ],
+        report_md = await llm_service.chat(
+            REPORT_SYSTEM_PROMPT,
+            f"分析上下文:\n{context}\n\n请生成完整的 Markdown 分析报告。",
             temperature=0.3,
         )
-
-        report_md = response.choices[0].message.content.strip()
+        report_md = report_md.strip()
         logger.info(f"[ReportGenerator] Generated report: {len(report_md)} chars")
 
         # 推荐 ECharts 图表配置 — 对齐 Java data-view-analyze

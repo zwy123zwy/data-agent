@@ -6,5 +6,15 @@ from .semantic_model import SemanticModel
 from .query_plan import QueryPlan
 from .model_config import ModelConfig
 from .human_feedback import HumanFeedback
+from .logical_relation import LogicalRelation
+from .agent_preset_question import AgentPresetQuestion
+from .chat_session import ChatSession
+from .chat_message import ChatMessage
+from .agent_datasource_tables import AgentDatasourceTables
 
-__all__ = ["Agent", "Datasource", "AgentDatasource", "Knowledge", "SemanticModel", "QueryPlan", "ModelConfig", "HumanFeedback"]
+__all__ = [
+    "Agent", "Datasource", "AgentDatasource", "Knowledge", "SemanticModel",
+    "QueryPlan", "ModelConfig", "HumanFeedback",
+    "LogicalRelation", "AgentPresetQuestion", "ChatSession", "ChatMessage",
+    "AgentDatasourceTables",
+]

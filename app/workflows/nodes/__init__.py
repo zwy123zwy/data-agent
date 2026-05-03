@@ -13,7 +13,7 @@ from .python_generate import python_generate_node
 from .python_execute import python_execute_node
 from .python_analyze import python_analyze_node
 from .report_generator import report_generator_node
-from .simple_report import simple_report_node
+
 from .table_relation import table_relation_node
 from .feasibility import feasibility_node, route_after_feasibility
 from .semantic_consistency import semantic_consistency_node
@@ -33,7 +33,7 @@ __all__ = [
     "python_execute_node",
     "python_analyze_node",
     "report_generator_node",
-    "simple_report_node",
+
     "table_relation_node",
     "feasibility_node",
     "route_after_feasibility",

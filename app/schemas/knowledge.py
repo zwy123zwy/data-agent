@@ -10,14 +10,20 @@ class KnowledgeBase(BaseModel):
     """知识库基础 Schema"""
     title: str = Field(..., max_length=200, description="知识标题")
     content: str = Field(..., description="知识内容")
-    type: str = Field(..., max_length=50, description="知识类型: business_term, query_example, business_rule")
+    type: str = Field(..., max_length=50, description="知识类型: DOCUMENT/QA/FAQ（对齐Java）")
+    question: Optional[str] = Field(None, description="FAQ/QA 问题（对齐Java）")
+    is_recall: int = Field(1, description="业务状态: 1=召回, 0=非召回（对齐Java）")
     metadata: Optional[Dict[str, Any]] = Field(None, description="元数据")
     enabled: bool = Field(True, description="是否启用")
 
 
 class KnowledgeCreate(KnowledgeBase):
     """创建知识库请求"""
-    pass
+    source_filename: Optional[str] = Field(None, max_length=255, description="源文件名")
+    file_path: Optional[str] = Field(None, max_length=500, description="文件路径")
+    file_size: Optional[int] = Field(None, description="文件大小（字节）")
+    file_type: Optional[str] = Field(None, max_length=50, description="文件类型")
+    splitter_type: Optional[str] = Field("token", max_length=50, description="分块策略")
 
 
 class KnowledgeUpdate(BaseModel):
@@ -25,6 +31,8 @@ class KnowledgeUpdate(BaseModel):
     title: Optional[str] = Field(None, max_length=200, description="知识标题")
     content: Optional[str] = Field(None, description="知识内容")
     type: Optional[str] = Field(None, max_length=50, description="知识类型")
+    question: Optional[str] = Field(None, description="FAQ/QA 问题")
+    is_recall: Optional[int] = Field(None, description="业务状态")
     metadata: Optional[Dict[str, Any]] = Field(None, description="元数据")
     enabled: Optional[bool] = Field(None, description="是否启用")
 
@@ -34,6 +42,15 @@ class KnowledgeResponse(KnowledgeBase):
     id: int
     agent_id: int
     embedding_id: Optional[str] = None
+    embedding_status: Optional[str] = None
+    error_msg: Optional[str] = None
+    source_filename: Optional[str] = None
+    file_path: Optional[str] = None
+    file_size: Optional[int] = None
+    file_type: Optional[str] = None
+    splitter_type: Optional[str] = None
+    is_deleted: int = 0
+    is_resource_cleaned: int = 0
     created_at: datetime
     updated_at: datetime
 

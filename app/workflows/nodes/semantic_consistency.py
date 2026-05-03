@@ -4,8 +4,7 @@
 """
 from typing import Dict, Any
 from ..state import WorkflowState, get_canonical_query, get_current_instruction
-from ...core.llm import get_llm_client
-from ...core.config import settings
+from ...core.llm import llm_service
 import logging
 
 logger = logging.getLogger(__name__)
@@ -47,7 +46,6 @@ async def semantic_consistency_node(state: WorkflowState) -> Dict[str, Any]:
     logger.info(f"[SemanticConsistency] Validating SQL: {sql[:100]}...")
 
     try:
-        llm = get_llm_client()
         prompt = (
             f"用户查询: {user_query}\n\n"
             f"当前步骤需求: {instruction}\n\n"
@@ -58,16 +56,8 @@ async def semantic_consistency_node(state: WorkflowState) -> Dict[str, Any]:
             f"请校验以上 SQL 的语义一致性。"
         )
 
-        response = await llm.chat.completions.create(
-            model=settings.openai_model,
-            messages=[
-                {"role": "system", "content": SEMANTIC_CHECK_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.0,
-        )
-
-        validation_result = response.choices[0].message.content.strip()
+        validation_result = await llm_service.chat(SEMANTIC_CHECK_SYSTEM_PROMPT, prompt, temperature=0.0)
+        validation_result = validation_result.strip()
         is_passed = not validation_result.startswith("不通过")
 
         logger.info(

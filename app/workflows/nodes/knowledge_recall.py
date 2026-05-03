@@ -3,7 +3,7 @@
 从向量数据库检索相关知识
 """
 from typing import Dict, Any
-from ..state import AgentState
+from ..state import WorkflowState
 from ...services.knowledge_service import KnowledgeService
 from ...schemas.knowledge import KnowledgeSearchRequest
 from ...core.database import get_db
@@ -12,7 +12,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-async def knowledge_recall_node(state: AgentState) -> Dict[str, Any]:
+async def knowledge_recall_node(state: WorkflowState) -> Dict[str, Any]:
     """
     知识召回节点
 

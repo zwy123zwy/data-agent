@@ -16,7 +16,7 @@ from ..schemas.query_plan import (
 )
 from ..workflows.nodes.planner import planner_node
 from ..workflows.nodes.plan_executor import plan_executor_node
-from ..workflows.state import AgentState
+from ..workflows.state import WorkflowState
 from ..models.query_plan import QueryPlan
 from sqlalchemy import select, func
 import logging
@@ -43,7 +43,7 @@ async def generate_plan(
         raise HTTPException(status_code=404, detail="Agent 不存在")
 
     # 构建状态
-    state: AgentState = {
+    state: WorkflowState = {
         "agent_id": agent_id,
         "user_query": request.query,
         "sql_retry_count": 0
@@ -85,7 +85,7 @@ async def execute_plan(
 
     try:
         # 构建状态
-        state: AgentState = {
+        state: WorkflowState = {
             "agent_id": agent_id,
             "user_query": request.query,
             "sql_retry_count": 0

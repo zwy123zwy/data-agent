@@ -38,8 +38,11 @@ class SemanticModelService:
             table_name=model_data.table_name,
             column_name=model_data.column_name,
             business_name=model_data.business_name,
-            description=model_data.description,
-            synonyms=model_data.synonyms,
+            business_description=model_data.description,
+            synonyms=",".join(model_data.synonyms) if model_data.synonyms else None,
+            column_comment=model_data.column_comment,
+            data_type=model_data.data_type,
+            status=1,
             sample_values=model_data.sample_values,
             metadata_=model_data.metadata
         )
@@ -176,9 +179,10 @@ class SemanticModelService:
                 matched_models.append(model)
                 continue
 
-            # 检查同义词
+            # 检查同义词（逗号分隔的字符串）
             if model.synonyms:
-                for synonym in model.synonyms:
+                synonyms_list = [s.strip() for s in model.synonyms.split(",")]
+                for synonym in synonyms_list:
                     if query_text in synonym.lower():
                         matched_models.append(model)
                         break
@@ -227,10 +231,10 @@ class SemanticModelService:
         if table_models:
             for model in table_models:
                 semantic_info += f"  业务名称: {model.business_name}\n"
-                if model.description:
-                    semantic_info += f"  说明: {model.description}\n"
+                if model.business_description:
+                    semantic_info += f"  说明: {model.business_description}\n"
                 if model.synonyms:
-                    semantic_info += f"  同义词: {', '.join(model.synonyms)}\n"
+                    semantic_info += f"  同义词: {model.synonyms}\n"
 
         # 字段级别的语义
         column_models = [m for m in models if m.column_name]
@@ -238,10 +242,10 @@ class SemanticModelService:
             semantic_info += f"\n  字段语义:\n"
             for model in column_models:
                 semantic_info += f"    - {model.column_name} ({model.business_name})"
-                if model.description:
-                    semantic_info += f": {model.description}"
+                if model.business_description:
+                    semantic_info += f": {model.business_description}"
                 if model.synonyms:
-                    semantic_info += f" [同义词: {', '.join(model.synonyms)}]"
+                    semantic_info += f" [同义词: {model.synonyms}]"
                 semantic_info += "\n"
 
         return semantic_info

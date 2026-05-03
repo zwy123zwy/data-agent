@@ -62,19 +62,15 @@ app.add_middleware(
 
 # 注册路由
 app.include_router(agent_controller.router)
-app.include_router(agent_controller.legacy_router)
 app.include_router(datasource_controller.router)
-app.include_router(datasource_controller.legacy_router)
 app.include_router(agent_datasource_controller.router)
 app.include_router(agent_knowledge_controller.router)
 app.include_router(semantic_model_controller.router)
-app.include_router(semantic_model_controller.legacy_router)
 app.include_router(query_plan_controller.router)
 app.include_router(schema_controller.router)
 app.include_router(graph_controller.router)
 app.include_router(streaming_graph_controller.router)
 app.include_router(model_config_controller.router)
-app.include_router(model_config_controller.legacy_router)
 app.include_router(feedback_controller.router)
 
 

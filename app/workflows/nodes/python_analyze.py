@@ -4,8 +4,7 @@ Python 分析节点（Python Analyze Node） — 对齐 Java PythonAnalyzeNode
 """
 from typing import Dict, Any
 from ..state import WorkflowState, get_canonical_query, get_current_step_number
-from ...core.llm import get_llm_client
-from ...core.config import settings
+from ...core.llm import llm_service
 import logging
 
 logger = logging.getLogger(__name__)
@@ -57,8 +56,6 @@ async def python_analyze_node(state: WorkflowState) -> Dict[str, Any]:
     logger.info("[PythonAnalyze] Analyzing Python execution results")
 
     try:
-        llm = get_llm_client()
-
         prompt = (
             f"用户查询: {user_query}\n\n"
             f"Python 执行输出:\n{python_output or python_data}\n\n"
@@ -67,17 +64,11 @@ async def python_analyze_node(state: WorkflowState) -> Dict[str, Any]:
             f"重点说明:\n"
             f"1. 数据的主要特征\n"
             f"2. 关键发现\n"
-            f"3. 对用户查询的回答\n\n"
-            f"只返回分析文字，不要有标题或格式。"
+            f"3. 对用户查询的回答"
         )
 
-        response = await llm.chat.completions.create(
-            model=settings.openai_model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-        )
-
-        analysis = response.choices[0].message.content.strip()
+        analysis = await llm_service.chat("", prompt, temperature=0.3)
+        analysis = analysis.strip()
         logger.info(f"[PythonAnalyze] Analysis: {analysis[:80]}...")
 
         # 回写步骤分析结果 — 对齐 Java

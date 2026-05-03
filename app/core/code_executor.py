@@ -10,8 +10,9 @@ import tempfile
 import os
 import json
 import logging
-from .llm import get_llm_client
+from .llm import llm_service
 from .config import settings
+from .text_utils import clean_code_block
 
 logger = logging.getLogger(__name__)
 
@@ -157,8 +158,6 @@ class AISimExecutor(CodeExecutor):
         logger.info("[AISimExecutor] Simulating Python execution with LLM")
 
         try:
-            llm = get_llm_client()
-
             prompt = f"""你是一个 Python 代码执行模拟器。
 给定以下 Python 代码和输入数据，模拟执行结果。
 
@@ -183,22 +182,8 @@ Python 代码:
 }}
 """
 
-            response = await llm.chat.completions.create(
-                model=settings.openai_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0
-            )
-
-            result_text = response.choices[0].message.content.strip()
-
-            # 清理 markdown 代码块
-            if result_text.startswith("```json"):
-                result_text = result_text[7:]
-            if result_text.startswith("```"):
-                result_text = result_text[3:]
-            if result_text.endswith("```"):
-                result_text = result_text[:-3]
-            result_text = result_text.strip()
+            result_text = await llm_service.chat("", prompt, temperature=0.0)
+            result_text = clean_code_block(result_text, lang="json")
 
             # 解析结果
             result_json = json.loads(result_text)

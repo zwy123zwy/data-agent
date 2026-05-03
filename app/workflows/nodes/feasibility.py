@@ -4,8 +4,8 @@
 """
 from typing import Dict, Any
 from ..state import WorkflowState, get_canonical_query
-from ...core.llm import get_llm_client
-from ...core.config import settings
+from ...core.llm import llm_service
+from ...core.text_utils import clean_code_block
 import logging
 import json
 
@@ -49,7 +49,6 @@ async def feasibility_node(state: WorkflowState) -> Dict[str, Any]:
         }
 
     try:
-        llm = get_llm_client()
         prompt = (
             f"用户问题: {canonical_query}\n\n"
             f"数据库 Schema:\n{schema}\n\n"
@@ -57,20 +56,8 @@ async def feasibility_node(state: WorkflowState) -> Dict[str, Any]:
             f"请评估以上信息是否足以回答用户问题。"
         )
 
-        response = await llm.chat.completions.create(
-            model=settings.openai_model,
-            messages=[
-                {"role": "system", "content": FEASIBILITY_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.0,
-        )
-
-        text = response.choices[0].message.content.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1] if text.startswith("```json") else text[3:]
-            text = text.rsplit("```", 1)[0]
-        result = json.loads(text)
+        text = await llm_service.chat(FEASIBILITY_SYSTEM_PROMPT, prompt, temperature=0.0)
+        result = json.loads(clean_code_block(text, lang="json"))
 
         feasible = result.get("feasible", True)
         reason = result.get("reason", "")
