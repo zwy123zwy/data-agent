@@ -3,7 +3,7 @@
 """
 import json
 from ..state import WorkflowState
-from ..core.llm import llm_service
+from ...core.llm import llm_service
 
 
 REPORT_SYSTEM_PROMPT = """你是一个数据分析报告生成助手。

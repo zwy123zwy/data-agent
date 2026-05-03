@@ -4,8 +4,8 @@
 """
 from typing import Dict, Any
 from ..state import WorkflowState, get_canonical_query, get_current_instruction
-from ..core.llm import get_llm_client
-from ..core.config import settings
+from ...core.llm import get_llm_client
+from ...core.config import settings
 import logging
 
 logger = logging.getLogger(__name__)

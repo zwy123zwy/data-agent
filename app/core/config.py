@@ -13,6 +13,7 @@ class CodeExecutorSettings(BaseSettings):
         env_file = ".env"
         case_sensitive = False
         env_prefix = "CODE_EXECUTOR_"
+        extra = "ignore"
 
 
 class FileStorageSettings(BaseSettings):
@@ -27,6 +28,7 @@ class FileStorageSettings(BaseSettings):
         env_file = ".env"
         case_sensitive = False
         env_prefix = "FILE_"
+        extra = "ignore"
 
 
 class VectorStoreSettings(BaseSettings):
@@ -41,6 +43,7 @@ class VectorStoreSettings(BaseSettings):
         env_file = ".env"
         case_sensitive = False
         env_prefix = "VECTOR_STORE_"
+        extra = "ignore"
 
 
 class LangfuseSettings(BaseSettings):
@@ -54,6 +57,7 @@ class LangfuseSettings(BaseSettings):
         env_file = ".env"
         case_sensitive = False
         env_prefix = "LANGFUSE_"
+        extra = "ignore"
 
 
 class Settings(BaseSettings):

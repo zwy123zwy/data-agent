@@ -4,8 +4,8 @@ Python 代码执行节点（Python Execute Node） — 对齐 Java PythonExecute
 """
 from typing import Dict, Any
 from ..state import WorkflowState
-from ..core.code_executor import get_code_executor
-from ..core.config import settings
+from ...core.code_executor import get_code_executor
+from ...core.config import settings
 import logging
 
 logger = logging.getLogger(__name__)

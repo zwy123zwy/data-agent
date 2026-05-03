@@ -4,8 +4,8 @@ LLM 动态报告 + ECharts 图表配置推荐 + 步骤结果聚合
 """
 from typing import Dict, Any
 from ..state import WorkflowState, get_canonical_query
-from ..core.llm import get_llm_client
-from ..core.config import settings
+from ...core.llm import get_llm_client
+from ...core.config import settings
 import logging
 import json
 from datetime import datetime

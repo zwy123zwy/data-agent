@@ -4,9 +4,9 @@
 """
 from typing import Dict, Any
 from ..state import AgentState
-from ..services.knowledge_service import KnowledgeService
-from ..schemas.knowledge import KnowledgeSearchRequest
-from ..core.database import get_db
+from ...services.knowledge_service import KnowledgeService
+from ...schemas.knowledge import KnowledgeSearchRequest
+from ...core.database import get_db
 import logging
 
 logger = logging.getLogger(__name__)

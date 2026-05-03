@@ -5,7 +5,7 @@
 from typing import Dict, Any, Literal
 import json
 from ..state import WorkflowState, get_current_step_number
-from ..core.config import settings
+from ...core.config import settings
 import logging
 
 logger = logging.getLogger(__name__)
