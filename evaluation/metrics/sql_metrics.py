@@ -226,12 +226,39 @@ def compute_syntax_pass(sql: str) -> tuple[bool, Optional[str]]:
     return True, None
 
 
+def compute_execution_accuracy_sync(
+    generated_sql: str,
+    gold_sql: str,
+    db,  # TestDatabase instance
+) -> tuple[bool, Optional[str], Optional[float], Optional[float]]:
+    """EX (Execution Accuracy): 两条 SQL 执行结果是否一致 (同步版, 用于 SQLite)
+
+    Args:
+        generated_sql: 模型生成的 SQL
+        gold_sql: 标准答案 SQL
+        db: TestDatabase 实例 (有 execute_sql_safe 方法)
+
+    Returns:
+        (是否一致, 错误信息, gen_time_ms, gold_time_ms)
+    """
+    gen_rows, gen_err, gen_time = db.execute_sql_safe(generated_sql)
+    if gen_err:
+        return False, f"Generated SQL error: {gen_err}", gen_time, 0
+
+    gold_rows, gold_err, gold_time = db.execute_sql_safe(gold_sql)
+    if gold_err:
+        return False, f"Gold SQL error: {gold_err}", gen_time, gold_time
+
+    match, err = _compare_result_sets(gen_rows, gold_rows)
+    return match, err, gen_time, gold_time
+
+
 async def compute_execution_accuracy(
     generated_sql: str,
     gold_sql: str,
     db_executor,  # AsyncSession or connection
 ) -> tuple[bool, Optional[str]]:
-    """EX (Execution Accuracy): 两条 SQL 执行结果是否一致
+    """EX (Execution Accuracy): 两条 SQL 执行结果是否一致 (异步版, 用于 MySQL)
 
     Args:
         generated_sql: 模型生成的 SQL

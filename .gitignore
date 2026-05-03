@@ -62,3 +62,6 @@ temp/
 
 # Evaluation reports (generated)
 evaluation/reports/
+
+# Evaluation test databases (generated)
+evaluation/databases/

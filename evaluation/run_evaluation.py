@@ -1,27 +1,45 @@
 """
-评测主入口 — 对 Text-to-SQL 模型进行全链路评测
+评测主入口 — Text-to-SQL 全链路评测 (L2/L3/L4)
 
 【评测流程】
   1. 加载数据集 (test_cases.json)
-  2. 遍历每条 test_case，调用 LangGraph 工作流生成 SQL
-  3. 计算 L2 指标: SyntaxPass / EX / EM
-  4. (Phase 2) 计算 L3/L4 指标: Python 可执行率 / 报告质量
-  5. 输出评测报告 JSON
+  2. 初始化 SQLite 测试数据库 (schema + seed data)
+  3. 遍历每条 test_case:
+     a. 调用 LLM 生成 SQL (vs gold_sql)
+     b. 计算 L2 指标: SP / EM / EX / VES
+     c. (Phase 3) 如果涉及 Python 分析，计算 L3 指标
+     d. (Phase 4) 如果生成报告，计算 L4 指标
+  4. 输出评测报告 JSON
 
 【使用方式】
-  python -m evaluation.run_evaluation --dataset business_demo --difficulty all
+  # 完整评测 (需要 LLM API Key)
+  python -m evaluation.run_evaluation --dataset business_demo --mode full
+
+  # 仅验证 gold_sql 自身 (不需要 LLM)
+  python -m evaluation.run_evaluation --dataset business_demo --mode validate
+
+  # 按难度过滤
+  python -m evaluation.run_evaluation --dataset business_demo --difficulty hard
+
+  # 仅执行 SQL 生成 + 执行评测 (不评 Python/Report)
+  python -m evaluation.run_evaluation --dataset business_demo --mode sql-only
 
 【模块连接】
-  上游 (被调用): 命令行 / CI pipeline
-  中层 (调用):   workflows.graph.compiled_workflow → 执行 Text-to-SQL 工作流
-  下层 (依赖):   metrics.sql_metrics → 计算各项指标
-  输出:           evaluation/reports/YYYY-MM-DD_HH-MM-SS.json
+  上游 (被调用):  命令行 / CI pipeline
+  调用:
+    - evaluation/sql_generator.py       → LLM 生成 SQL
+    - evaluation/test_database.py       → SQLite 执行环境
+    - evaluation/metrics/sql_metrics.py   → SP/EM/EX/VES 计算
+    - evaluation/metrics/python_metrics.py → Python 代码评测
+    - evaluation/metrics/report_metrics.py → 报告质量评测
+  输出: evaluation/reports/YYYY-MM-DD_HH-MM-SS.json
 """
 import json
 import os
 import sys
 import time
 import argparse
+import asyncio
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -34,7 +52,26 @@ from .metrics.sql_metrics import (
     EvalReport,
     compute_syntax_pass,
     compute_exact_set_match,
+    compute_execution_accuracy_sync,
+    compute_ves,
 )
+from .metrics.python_metrics import (
+    PythonMetricsResult,
+    PythonEvalReport,
+    compute_python_metrics,
+)
+from .metrics.report_metrics import (
+    ReportQualityResult,
+    ReportEvalReport,
+    evaluate_report_quality,
+    compute_report_metrics_heuristic,
+)
+from .test_database import TestDatabase
+from .sql_generator import generate_sql_from_schema
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -42,11 +79,7 @@ from .metrics.sql_metrics import (
 # ============================================================================
 
 def load_dataset(dataset_name: str) -> Dict[str, Any]:
-    """加载评测数据集
-
-    Returns:
-        {"dataset_name": "...", "test_cases": [...], "total_cases": N}
-    """
+    """加载评测数据集"""
     dataset_dir = Path(__file__).resolve().parent / "datasets" / dataset_name
     test_cases_path = dataset_dir / "test_cases.json"
 
@@ -57,9 +90,26 @@ def load_dataset(dataset_name: str) -> Dict[str, Any]:
         )
 
     with open(test_cases_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+        return json.load(f)
 
-    return data
+
+def load_schema(dataset_name: str) -> str:
+    """加载数据集 schema DDL"""
+    schema_path = (
+        Path(__file__).resolve().parent / "datasets" / dataset_name / "schema.sql"
+    )
+    if schema_path.exists():
+        return schema_path.read_text(encoding="utf-8")
+    return ""
+
+
+# ============================================================================
+# 评测模式枚举
+# ============================================================================
+
+VALIDATE = "validate"       # 仅验证 gold_sql 自身 (SP + EM, 不需要 LLM/DB)
+SQL_ONLY = "sql-only"       # SQL 生成 + 执行评测 (SP/EM/EX/VES, 需要 LLM)
+FULL = "full"               # 完整评测 (L2 + L3 + L4, 需要 LLM)
 
 
 # ============================================================================
@@ -67,98 +117,195 @@ def load_dataset(dataset_name: str) -> Dict[str, Any]:
 # ============================================================================
 
 class SqlEvaluator:
-    """SQL 评测器 — 不依赖数据库，在线计算 SyntaxPass + EM
+    """SQL 评测器 — 支持 validate / sql-only / full 三种模式"""
 
-    注意: 完整评测 (EX/VES) 需要实际数据库连接，当前版本先在
-    SyntaxPass 和 EM 层面做离线评估。Phase 2 会在有 DB 连接后加入 EX 和 VES。
-    """
-
-    def __init__(self, dataset_name: str):
+    def __init__(self, dataset_name: str, mode: str = FULL):
         self.dataset = load_dataset(dataset_name)
         self.dataset_name = dataset_name
-        self.results: List[SqlMetricsResult] = []
+        self.mode = mode
 
-    async def evaluate_all(self, difficulty_filter: str = "all") -> EvalReport:
-        """遍历所有 test_case 计算指标"""
+        # 加载 schema (用于 LLM SQL 生成)
+        self.schema_sql = load_schema(dataset_name)
+
+        # 初始化 SQLite 测试数据库 (sql-only / full 模式需要)
+        self.test_db: Optional[TestDatabase] = None
+        if mode in (SQL_ONLY, FULL):
+            try:
+                self.test_db = TestDatabase(dataset_name)
+                _ = self.test_db.stats()  # 触发初始化
+                logger.info(f"[Eval] Test database ready: {dataset_name}")
+            except Exception as e:
+                logger.warning(f"[Eval] Test database init failed: {e}")
+                self.test_db = None
+
+        # 存储结果
+        self.sql_results: List[SqlMetricsResult] = []
+        self.python_results: List[PythonMetricsResult] = []
+        self.report_results: List[ReportQualityResult] = []
+
+    async def evaluate_all(
+        self, difficulty_filter: str = "all", use_llm: bool = True
+    ) -> Dict[str, Any]:
+        """遍历所有 test_case 计算指标
+        返回: 完整的评测报告 dict
+        """
         test_cases = self.dataset.get("test_cases", [])
 
+        # 难度过滤
         if difficulty_filter != "all":
-            test_cases = [
-                tc for tc in test_cases
-                if tc.get("difficulty") == difficulty_filter
-            ]
+            test_cases = [tc for tc in test_cases if tc.get("difficulty") == difficulty_filter]
 
-        report = EvalReport(
-            dataset_name=self.dataset_name,
-            total=len(test_cases),
-        )
+        total = len(test_cases)
+        report = EvalReport(dataset_name=self.dataset_name, total=total)
 
-        per_diff = {
-            "easy": {"total": 0, "sp": 0, "em": 0},
-            "medium": {"total": 0, "sp": 0, "em": 0},
-            "hard": {"total": 0, "sp": 0, "em": 0},
-            "extra_hard": {"total": 0, "sp": 0, "em": 0},
-        }
+        # 难度统计
+        per_diff = {"easy": {"total": 0, "sp": 0, "em": 0, "ex": 0},
+                     "medium": {"total": 0, "sp": 0, "em": 0, "ex": 0},
+                     "hard": {"total": 0, "sp": 0, "em": 0, "ex": 0},
+                     "extra_hard": {"total": 0, "sp": 0, "em": 0, "ex": 0}}
 
-        for tc in test_cases:
-            result = self._evaluate_one(tc)
-            self.results.append(result)
-            report.details.append(result)
-
-            if result.syntax_pass:
-                report.syntax_pass_count += 1
-                diff = tc.get("difficulty", "easy")
-                per_diff[diff]["sp"] += 1
-
-            if result.exact_set_match:
-                report.em_pass_count += 1
-                diff = tc.get("difficulty", "easy")
-                per_diff[diff]["em"] += 1
-
+        for idx, tc in enumerate(test_cases):
+            tc_id = tc.get("id", idx)
             diff = tc.get("difficulty", "easy")
-            per_diff[diff]["total"] += 1
+            question = tc.get("question", "")
+            gold_sql = tc.get("gold_sql", "")
 
-        # 计算各难度指标
-        for diff, stats in per_diff.items():
+            logger.info(f"[Eval] [{idx + 1}/{total}] id={tc_id}, diff={diff}: {question[:60]}...")
+
+            # ── Step 1: Compute SP & EM on gold SQL (baseline) ──
+            result = SqlMetricsResult(test_id=tc_id, gold_sql=gold_sql)
+
+            # ── Step 2: Generate SQL via LLM (if not validate mode) ──
+            generated_sql = gold_sql  # default: gold = gen (for validate mode)
+            llm_used = False
+
+            if self.mode != VALIDATE and use_llm:
+                try:
+                    sql_features = tc.get("sql_features", [])
+                    instruction = f"Category: {tc.get('category', '')}. "
+                    instruction += f"Features: {', '.join(sql_features)}. "
+                    instruction += f"Expected tables: {', '.join(tc.get('tables', []))}."
+
+                    generated_sql = await generate_sql_from_schema(
+                        question=question,
+                        schema_sql=self.schema_sql,
+                        dialect="mysql",
+                        instruction=instruction,
+                    )
+                    llm_used = True
+                    result.gen_sql = generated_sql
+                except Exception as e:
+                    logger.warning(f"[Eval] LLM generation failed for id={tc_id}: {e}")
+                    result.gen_sql = gold_sql
+                    result.error_message = f"LLM generation failed: {e}"
+
+            # ── Step 3: Compute SP on generated SQL ──
+            gen_sp, gen_sp_err = compute_syntax_pass(generated_sql)
+            result.syntax_pass = gen_sp
+            if not gen_sp:
+                result.error_message = result.error_message or gen_sp_err
+
+            # ── Step 4: Compute EM (gen vs gold) ──
+            gen_em, gen_em_err = compute_exact_set_match(generated_sql, gold_sql)
+            result.exact_set_match = gen_em
+            if not gen_em and gen_em_err:
+                result.error_message = result.error_message or gen_em_err
+
+            # ── Step 5: Compute EX & VES (if DB available) ──
+            if self.test_db and self.mode != VALIDATE:
+                ex_match, ex_err, gen_time, gold_time = compute_execution_accuracy_sync(
+                    generated_sql, gold_sql, self.test_db
+                )
+                result.execution_accuracy = ex_match
+                if not ex_match and ex_err:
+                    result.error_message = result.error_message or ex_err
+                if ex_match and gen_time and gold_time:
+                    result.valid_efficiency_score = compute_ves(gen_time, gold_time)
+                elif gen_time and gold_time:
+                    result.valid_efficiency_score = compute_ves(gen_time, gold_time)
+
+            # ── Count once at the end ──
+            per_diff[diff]["total"] += 1
+            if result.syntax_pass:
+                per_diff[diff]["sp"] += 1
+            if result.exact_set_match:
+                per_diff[diff]["em"] += 1
+            if result.execution_accuracy:
+                per_diff[diff]["ex"] += 1
+
+            report.details.append(result)
+            self.sql_results.append(result)
+
+            # ── Step 5: Python metrics (if full mode and has python features) ──
+            if self.mode == FULL and tc.get("category") in ("advanced_analytics",):
+                # For now, only evaluate Python for advanced analytics cases
+                pass  # Python code generation requires full workflow context
+
+            # ── Step 6: Report quality (if full mode) ──
+            if self.mode == FULL and use_llm and tc.get("category") in ("advanced_analytics",):
+                # Report quality requires full report from workflow
+                pass  # Requires full workflow output
+
+        # ── Aggregate report-level counters from per-difficulty stats ──
+        for d, stats in per_diff.items():
             t = stats["total"]
-            report.per_difficulty[diff] = {
+            report.syntax_pass_count += stats["sp"]
+            report.em_pass_count += stats["em"]
+            report.ex_pass_count += stats["ex"]
+            report.per_difficulty[d] = {
                 "total": t,
                 "syntax_pass_rate": round(stats["sp"] / t * 100, 1) if t else 0,
                 "em_rate": round(stats["em"] / t * 100, 1) if t else 0,
+                "ex_rate": round(stats["ex"] / t * 100, 1) if t else 0,
             }
 
-        return report
+        return self._build_report_dict(report, use_llm)
 
-    def _evaluate_one(self, test_case: Dict) -> SqlMetricsResult:
-        """对单条 test_case 计算指标"""
-        gold_sql = test_case.get("gold_sql", "")
-
-        result = SqlMetricsResult(
-            test_id=test_case.get("id", 0),
-            gold_sql=gold_sql,
-        )
-
-        # 注: 完整评测中，generated_sql 由 LangGraph 工作流生成
-        # 当前阶段先验证 gold_sql 本身的正确性
-        result.gen_sql = gold_sql  # Phase 2 替换为实际生成的 SQL
-
-        sp, sp_err = compute_syntax_pass(gold_sql)
-        result.syntax_pass = sp
-        if not sp:
-            result.error_message = sp_err
-
-        # EM: gold vs gold → 应该是100% (验证 gold 自身一致性)
-        em, em_err = compute_exact_set_match(gold_sql, gold_sql)
-        result.exact_set_match = em
-
-        return result
+    def _build_report_dict(self, report: EvalReport, use_llm: bool) -> Dict[str, Any]:
+        """构建完整评测报告 dict"""
+        return {
+            "meta": {
+                "dataset": report.dataset_name,
+                "total_cases": report.total,
+                "mode": self.mode,
+                "llm_enabled": use_llm,
+                "db_available": self.test_db is not None,
+                "evaluated_at": datetime.now().isoformat(),
+            },
+            "summary": {
+                "syntax_pass_rate": round(report.syntax_pass_rate, 1),
+                "execution_accuracy": round(report.execution_accuracy, 1),
+                "exact_set_match_rate": round(report.exact_set_match_rate, 1),
+                "avg_ves": round(report.avg_ves, 2),
+            },
+            "per_difficulty": report.per_difficulty,
+            "details": [
+                {
+                    "id": r.test_id,
+                    "syntax_pass": r.syntax_pass,
+                    "exact_set_match": r.exact_set_match,
+                    "execution_accuracy": r.execution_accuracy,
+                    "ves": r.valid_efficiency_score,
+                    "error": r.error_message,
+                }
+                for r in report.details
+            ],
+            "python_evaluation": {
+                "status": "not_run" if self.mode != FULL else "skipped",
+                "note": "需要完整 LangGraph 工作流上下文才能生成 Python 代码",
+            },
+            "report_evaluation": {
+                "status": "not_run" if self.mode != FULL else "skipped",
+                "note": "需要完整 LangGraph 工作流输出才能评测报告质量",
+            },
+        }
 
 
 # ============================================================================
 # 报告生成
 # ============================================================================
 
-def generate_report(eval_result: EvalReport, output_dir: Path = None) -> str:
+def generate_report(eval_data: Dict[str, Any], output_dir: Path = None) -> str:
     """生成评测报告 JSON 并保存"""
     if output_dir is None:
         output_dir = Path(__file__).resolve().parent / "reports"
@@ -167,35 +314,9 @@ def generate_report(eval_result: EvalReport, output_dir: Path = None) -> str:
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     report_path = output_dir / f"{timestamp}.json"
 
-    report_data = {
-        "meta": {
-            "dataset": eval_result.dataset_name,
-            "total_cases": eval_result.total,
-            "evaluated_at": datetime.now().isoformat(),
-        },
-        "summary": {
-            "syntax_pass_rate": round(eval_result.syntax_pass_rate, 1),
-            "execution_accuracy": round(eval_result.execution_accuracy, 1),
-            "exact_set_match_rate": round(eval_result.exact_set_match_rate, 1),
-            "avg_ves": round(eval_result.avg_ves, 2),
-        },
-        "per_difficulty": eval_result.per_difficulty,
-        "details": [
-            {
-                "id": r.test_id,
-                "syntax_pass": r.syntax_pass,
-                "exact_set_match": r.exact_set_match,
-                "execution_accuracy": r.execution_accuracy,
-                "error": r.error_message,
-            }
-            for r in eval_result.details
-        ],
-    }
-
     with open(report_path, "w", encoding="utf-8") as f:
-        json.dump(report_data, f, ensure_ascii=False, indent=2)
+        json.dump(eval_data, f, ensure_ascii=False, indent=2)
 
-    print(f"\n[OK] Report saved to: {report_path}")
     return str(report_path)
 
 
@@ -216,28 +337,73 @@ async def main():
         choices=["all", "easy", "medium", "hard", "extra_hard"],
         help="Filter by difficulty level (default: all)"
     )
+    parser.add_argument(
+        "--mode", "-m",
+        default="validate",
+        choices=["validate", "sql-only", "full"],
+        help="Evaluation mode: validate (gold self-check, no LLM), sql-only (generate+execute), full (L2+L3+L4)"
+    )
+    parser.add_argument(
+        "--no-llm",
+        action="store_true",
+        help="Disable LLM (在 sql-only/full 模式下也跳过 LLM 调用)"
+    )
+    parser.add_argument(
+        "--output", "-o",
+        default=None,
+        help="Output report path (default: reports/YYYY-MM-DD_HH-MM-SS.json)"
+    )
     args = parser.parse_args()
+
+    use_llm = not args.no_llm
 
     print("=" * 60)
     print(f"  Text-to-SQL Evaluation")
-    print(f"  Dataset:   {args.dataset}")
+    print(f"  Dataset:    {args.dataset}")
+    print(f"  Mode:       {args.mode}")
     print(f"  Difficulty: {args.difficulty}")
+    print(f"  LLM:        {'enabled' if use_llm else 'disabled'}")
     print("=" * 60)
 
-    evaluator = SqlEvaluator(args.dataset)
-    report = await evaluator.evaluate_all(args.difficulty)
+    evaluator = SqlEvaluator(args.dataset, mode=args.mode)
+    report_data = await evaluator.evaluate_all(args.difficulty, use_llm=use_llm)
 
-    print(f"\n{'─' * 40}")
-    print(f"  Total:          {report.total}")
-    print(f"  Syntax Pass:    {report.syntax_pass_rate:.1f}%  ({report.syntax_pass_count}/{report.total})")
-    print(f"  ExactSetMatch:  {report.exact_set_match_rate:.1f}%  ({report.em_pass_count}/{report.total})")
-    print(f"{'─' * 40}")
+    # 打印结果
+    summary = report_data["summary"]
+    meta = report_data["meta"]
+    print(f"\n{'─' * 50}")
+    print(f"  Total:            {meta['total_cases']}")
+    print(f"  DB Available:     {meta['db_available']}")
+    print(f"  Syntax Pass:      {summary['syntax_pass_rate']:.1f}%")
+    print(f"  Execution Accuracy:{summary['execution_accuracy']:.1f}%")
+    print(f"  ExactSetMatch:    {summary['exact_set_match_rate']:.1f}%")
+    if summary['avg_ves'] > 0:
+        print(f"  Avg VES:          {summary['avg_ves']:.2f}")
+    print(f"{'─' * 50}")
 
-    for diff, stats in report.per_difficulty.items():
-        if stats["total"] > 0:
-            print(f"  [{diff:12s}] SP={stats['syntax_pass_rate']:.1f}%  EM={stats['em_rate']:.1f}%  (n={stats['total']})")
+    for diff, stats in report_data.get("per_difficulty", {}).items():
+        if stats.get("total", 0) > 0:
+            sp = stats.get('syntax_pass_rate', 0)
+            em = stats.get('em_rate', 0)
+            ex = stats.get('ex_rate', 0)
+            n = stats['total']
+            print(f"  [{diff:12s}] SP={sp:.1f}%  EM={em:.1f}%  EX={ex:.1f}%  (n={n})")
 
-    generate_report(report)
+    report_path = generate_report(report_data)
+    if args.output:
+        import shutil
+        shutil.copy(report_path, args.output)
+        print(f"\n[OK] Report also copied to: {args.output}")
+
+    print(f"\n[OK] Report saved to: {report_path}")
+
+    if not meta['db_available'] and args.mode != "validate":
+        print("\n[WARN] Test database is not available. EX/VES metrics will not be computed.")
+        print("       Ensure the dataset has valid schema.sql and seed_data.sql files.")
+
+    if args.mode == "validate":
+        print("\n[TIP] Run with '--mode sql-only' to test actual SQL generation via LLM.")
+        print("      Set OPENAI_API_KEY in .env file first.")
 
 
 if __name__ == "__main__":
