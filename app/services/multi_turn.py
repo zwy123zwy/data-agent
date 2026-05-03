@@ -1,6 +1,30 @@
 """
-多轮对话上下文管理（Multi-Turn Context Manager） — 对齐 Java MultiTurnContextManager
-管理对话历史，注入后续 prompt，限制轮次
+多轮对话上下文管理 — 对齐 Java MultiTurnContextManager
+
+【在系统中的地位】
+  本服务管理同一 threadId 下的多轮对话历史。当用户连续提问时，
+  需要将历史对话上下文注入 LLM prompt，使 LLM 理解对话的连续性。
+
+【模块连接】
+  上游 (谁调用 MultiTurnContextManager):
+    - api/streaming_graph_controller.py → 流式查询前注入历史上下文
+    - api/graph_controller.py           → 同步查询前注入历史上下文
+    - api/chat_controller.py            → 会话历史管理
+
+  被依赖:
+    - core/config.py → settings.max_turn_history (最大保留轮数)
+
+  数据流:
+    用户第1轮提问 → 完成 → add_turn(threadId, query, response)
+    用户第2轮提问 → get_context_for_prompt(threadId) → 注入 prompt
+    → LLM 理解"用户第2轮是在追问第1轮的结果"
+
+  Java 对应:
+    MultiTurnContextManager ≈ MultiTurnContextManager.java
+
+【线程模型】
+  每个 threadId 维护独立的历史轮次列表。
+  最大保留 max_turn_history 轮 (默认5轮)，超出后自动裁剪最旧轮次。
 """
 from typing import List, Dict, Any, Optional
 from ..core.config import settings

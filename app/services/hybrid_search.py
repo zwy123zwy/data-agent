@@ -1,6 +1,33 @@
 """
-混合检索服务（Hybrid Search Service） — 对齐 Java AgentVectorStoreService
-向量检索 + 关键词检索，支持 RRF/WeightedAverage 融合策略
+混合检索服务 — 对齐 Java AgentVectorStoreService
+
+【在系统中的地位】
+  本服务实现 RAG 的多路检索 + 融合排序。单独使用向量检索或关键词检索
+  都有缺陷，混合检索结合两者优势:
+    - 向量检索: 语义理解强，能匹配同义词/近义词
+    - 关键词检索: 精确匹配强，不会漏掉专有名词
+
+【模块连接】
+  上游 (谁调用 HybridSearchService):
+    - workflows/nodes/knowledge_recall.py → 工作流中召回相关知识
+    - services/knowledge_service.py       → (可选) 高级知识检索
+
+  被依赖:
+    - core/vector_store.py  → 向量检索 + 关键词检索的底层实现
+    - core/config.py        → vector_store.* 配置参数
+
+  Java 对应:
+    HybridSearchService ≈ AgentVectorStoreService.java 中的 hybridSearch() 方法
+
+【RRF 融合算法】
+  RRF (Reciprocal Rank Fusion) 是业界标准的融合排序算法:
+    RRF_score(d) = Σ 1 / (k + rank_i(d))
+  其中:
+    - d: 候选文档
+    - k: 常数 (默认 60)，防止低排名文档得分过高
+    - rank_i(d): 文档 d 在第 i 个检索结果中的排名
+
+  相比简单的 WeightedAverage，RRF 不需要分数归一化，对排名差异不敏感。
 """
 from typing import List, Dict, Any, Optional
 from ..core.config import settings

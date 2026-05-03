@@ -1,6 +1,41 @@
 """
-代码执行器服务
-支持 Local/Docker/AI-Sim 三种执行模式
+代码执行器服务 — Python 代码安全执行引擎
+
+【在系统中的地位】
+  当 LLM 生成了 Python 分析代码后，需要一个安全的执行环境来运行它。
+  本服务提供三种执行模式，从本地 subprocess 到 Docker 沙箱隔离。
+
+【模块连接】
+  上游 (谁调用 CodeExecutor):
+    - workflows/nodes/python_execute.py → 工作流中执行 LLM 生成的 Python 代码
+      输入: sql_result (SQL 查询结果数据) + python_code (LLM 生成的代码)
+      输出: ExecutionResult (success, output, error, charts, data)
+
+  依赖:
+    - core/llm.py:llm_service → AISimExecutor 用 LLM 模拟代码执行
+    - core/config.py:settings.code_executor → 执行器类型和参数配置
+
+  Java 对应:
+    CodeExecutor ≈ CodePoolExecutorService.java
+    LocalExecutor ≈ LocalCodeExecutor
+    DockerExecutor ≈ DockerCodeExecutor
+    AISimExecutor ≈ AISimulationExecutor
+
+【三种执行模式】
+  1. LocalExecutor (默认): subprocess.run(["python", code_file])
+     - 优点: 简单、快速、无额外依赖
+     - 缺点: 代码在宿主机运行，有安全风险
+     - 适用: 开发环境、可信代码
+
+  2. DockerExecutor: Docker 容器中执行
+     - 优点: 完全隔离，安全
+     - 缺点: 需要 Docker 环境，启动慢
+     - 适用: 生产环境
+
+  3. AISimExecutor: LLM 模拟执行结果
+     - 优点: 不需要实际执行环境
+     - 缺点: 结果不准确，可能产生幻觉
+     - 适用: 快速原型、无 Python 环境时
 """
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional

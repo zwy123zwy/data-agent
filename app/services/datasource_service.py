@@ -1,3 +1,37 @@
+"""
+数据源服务 — 管理用户数据库连接信息
+
+【在系统中的地位】
+  数据源是连接用户业务数据库的"桥梁配置"。它存储连接信息
+  (host/port/username/password/database)，支持连接测试。
+
+【模块连接】
+  上游 (谁调用 DatasourceService):
+    - api/datasource_controller.py → CRUD API + 测试连接
+    - api/schema_controller.py     → Schema 发现
+
+  继承:
+    - core/base_service.py:BaseService → 通用 CRUD
+
+  被依赖:
+    - models/datasource.py:Datasource  → ORM Model (MySQL datasource 表)
+    - aiomysql / aiosqlite             → 异步数据库驱动 (连接测试)
+
+  下游 (谁使用 Datasource 数据):
+    - services/schema_service.py       → 读取 Datasource 连接信息，获取表结构
+    - services/agent_datasource_service.py → 绑定 Agent-数据源关系
+
+  Java 对应:
+    DatasourceService ≈ DatasourceServiceImpl.java
+
+【支持的数据源类型】
+  - mysql:      使用 aiomysql 驱动，通过 information_schema 获取元数据
+  - sqlite:     使用 aiosqlite 驱动，本地文件数据库
+  - postgresql: 计划中 (使用 asyncpg)
+  - sqlserver:  计划中
+  - oracle:     计划中
+  - hive:       计划中
+"""
 from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..models.datasource import Datasource

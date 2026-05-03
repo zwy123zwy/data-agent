@@ -1,6 +1,39 @@
 """
-SQL 生成节点（SQL Generate Node） — 对齐 Java SqlGenerateNode
-支持首次生成 + 基于错误原因的上下文重试
+SQL 生成节点 — 对齐 Java SqlGenerateNode
+
+【在系统中的地位】
+  这是 Text-to-SQL 的核心节点。它接收自然语言问题 + 数据库 Schema，
+  调用 LLM 生成 SQL 查询语句。支持首次生成和基于错误的重试。
+
+【模块连接】
+  上游 (由谁路由到此):
+    - plan_executor → 当前步骤是 SQL_GENERATE_NODE 时路由而来
+    - sql_execute   → SQL 执行失败后路由回来重试
+    - semantic_consistency → 语义校验失败后路由回来重试
+
+  下游 (写入 state):
+    - state["generated_sql"]        → 生成的 SQL 语句
+    - state["sql_generate_count"]   → 生成次数 (用于重试控制)
+    - state["sql_regenerate_reason"] → 重试原因 (清除或设置)
+
+  路由 (graph.py route_after_sql_generate):
+    - 成功 → semantic_consistency (语义校验)
+    - 失败且未超限 → sql_generate (自循环重试)
+    - 失败且超限 → END
+
+  依赖:
+    - core/llm.py:llm_service.chat() → 调用 LLM 生成 SQL
+    - core/text_utils.py:clean_code_block() → 清洗 LLM 输出 (去掉 ```sql 标记)
+    - state helper: get_canonical_query() → 获取规范查询文本
+    - state helper: get_current_instruction() → 获取当前步骤指令
+
+  Java 对应:
+    sql_generate_node ≈ SqlGenerateNode.java
+
+【首次生成 vs 重试生成】
+  首次: 基于 schema + 用户问题 + 当前步骤指令 → 生成 SQL
+  重试: 基于上次 SQL + 错误原因 + 步骤指令 → 修正 SQL
+  最多重试 max_sql_retry_count 次 (配置在 .env)
 """
 from typing import Dict, Any
 from ..state import WorkflowState, get_canonical_query, get_current_instruction

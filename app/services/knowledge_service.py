@@ -1,6 +1,38 @@
 """
-Knowledge Service
-知识库服务，包含 CRUD 和向量检索功能
+Knowledge Service — 知识库服务，连接数据库与向量存储的桥梁
+
+【在系统中的地位】
+  本服务是 RAG (Retrieval-Augmented Generation) 的核心实现。
+  它同时操作两个存储系统:
+    1. MySQL 数据库 → 存储知识元数据 (Knowledge 表)
+    2. 向量存储     → 存储文本向量 (用于语义检索)
+
+【模块连接】
+  上游 (谁调用 KnowledgeService):
+    - agent_knowledge_controller.py  → CRUD API: create/update/delete/list/search
+    - knowledge_recall.py (workflow) → 工作流中调 search_knowledge() 召回相关知识
+    - query_rewrite.py (workflow)    → 工作流中可能使用知识增强查询
+
+  中层 (KnowledgeService 依赖):
+    - models/knowledge.py            → Knowledge ORM 模型 (MySQL 表映射)
+    - core/vector_store.py           → VectorStore 抽象层 (向量存储接口)
+    - schemas/knowledge.py           → Pydantic DTO (请求/响应验证)
+
+  下游 (向量存储实现):
+    - core/vector_store.py → SimpleVectorStore (内存) / ES / Redis / PGVector
+
+  Java 对应:
+    KnowledgeService ≈ AgentKnowledgeService.java + AgentVectorStoreService.java (简化版)
+
+【RAG 流程 (从用户提问到知识召回)】
+  1. 用户提问 → knowledge_recall_node 调用 search_knowledge()
+  2. search_knowledge() → vector_store.search() 语义检索
+  3. 返回 top_k 条最相关的知识
+  4. 知识内容注入 LLM prompt → 提升 SQL/Python 生成质量
+
+【双写一致性】
+  create/update 时同时写入 MySQL 和向量库，失败时回滚。
+  delete 时先删向量库再删 MySQL (向量库删除失败不阻塞数据库删除)。
 """
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
@@ -14,11 +46,15 @@ logger = logging.getLogger(__name__)
 
 
 class KnowledgeService:
-    """知识库服务"""
+    """知识库服务 — 同时管理 MySQL Knowledge 表和向量库中的文档
+
+    每个 Agent 在向量库中有独立的 collection: agent_{agent_id}_knowledge
+    这样不同 Agent 的知识在向量空间中隔离，避免检索混淆。
+    """
 
     @staticmethod
     def _get_collection_name(agent_id: int) -> str:
-        """获取 Agent 的向量集合名称"""
+        """获取 Agent 的向量集合名称 — 每个 Agent 独立 collection 实现隔离"""
         return f"agent_{agent_id}_knowledge"
 
     @staticmethod

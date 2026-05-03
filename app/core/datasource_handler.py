@@ -1,5 +1,29 @@
 """
-数据库类型处理器基类和实现
+数据库类型处理器 — 策略模式适配不同数据库
+
+【在系统中的地位】
+  不同数据库 (MySQL/PostgreSQL/SQLite) 的元数据查询语法不同。
+  本文件使用策略模式，每种数据库一个 Handler，统一接口隐藏差异。
+
+【模块连接】
+  上游 (谁调用 Handler):
+    - services/schema_service.py → 通过 get_handler(type) 获取对应处理器
+      - build_connection_url() → 构建 SQLAlchemy 连接 URL
+      - get_tables()           → 查询 information_schema 获取表列表
+      - get_columns()          → 查询 information_schema 获取字段信息
+      - get_foreign_keys()     → 查询外键约束
+
+  下游 (Handler 操作):
+    - sqlalchemy.AsyncConnection → 执行原生 SQL 查询元数据
+
+  Java 对应:
+    DatasourceTypeHandler ≈ 数据库方言适配器 (MyBatis-Plus 的 IDialect)
+
+【扩展新数据库】
+  1. 继承 DatasourceTypeHandler
+  2. 实现 type_name(), build_connection_url(), get_tables(), get_columns()
+  3. 调用 register_handler() 注册
+  4. 前端 datasource/types 列表自动包含新类型
 """
 from abc import ABC, abstractmethod
 from typing import Dict, List, Any, Optional

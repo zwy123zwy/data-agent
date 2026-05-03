@@ -1,6 +1,36 @@
 """
-数据库 Schema 服务
-用于获取数据库表结构、字段信息等元数据
+数据库 Schema 服务 — 连接用户数据库读取元数据 (information_schema)
+
+【在系统中的地位】
+  本服务是整个 Text-to-SQL 管道的数据基础。它实际连接到用户配置的
+  数据库 (MySQL/PostgreSQL/SQLite)，读取表结构、字段、外键等元数据，
+  将其格式化为 LLM 能理解的 DDL 文本。
+
+【模块连接】
+  上游 (谁调用 SchemaService):
+    - workflows/nodes/schema_recall.py → 工作流中调用，获取 DDL 给 SQL 生成
+    - api/schema_controller.py        → 前端手动查看数据库 Schema
+
+  被依赖:
+    - core/datasource_handler.py → 数据库类型适配器 (MySQL/PostgreSQL/SQLite)
+      get_handler(type) 返回对应 Handler，提供 get_tables/get_columns/get_foreign_keys
+
+  数据流:
+    Datasource (连接信息) → create_async_engine → connect → information_schema 查询
+    → raw columns/tables → 格式化 → DDL 文本 → LLM prompt
+
+  Java 对应:
+    SchemaService ≈ SchemaRecallNode.java + SchemaService.java (合并)
+
+【DDL 格式说明】
+  生成的 DDL 不是 SQL 标准的 CREATE TABLE 语句，而是"描述性 DDL"——
+  更适合 LLM 理解的表格形式:
+    表名: users
+    说明: 用户表
+    字段:
+      - id (INT) [主键] - 用户ID
+      - name (VARCHAR) - 用户名
+  这种格式 LLM 能高效解析，用于生成准确的 SQL。
 """
 from typing import List, Dict, Any, Optional
 from sqlalchemy import create_engine, text

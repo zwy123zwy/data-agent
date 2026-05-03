@@ -1,3 +1,32 @@
+"""
+Agent 业务逻辑服务 — 继承 BaseService[Agent]
+
+【在系统中的地位】
+  Agent 是系统的核心实体，代表一个"数据分析智能体"。
+  每个 Agent 可以绑定数据源、配置知识库、设置 LLM 模型，独立对外提供服务。
+
+【模块连接】
+  上游 (谁调用 AgentService):
+    - api/agent_controller.py          → CRUD API + API Key 管理
+    - api/streaming_graph_controller.py → 流式查询前验证 Agent 是否存在
+
+  继承:
+    - core/base_service.py:BaseService → 通用 CRUD (get/create/list/update/delete)
+
+  被依赖:
+    - models/agent.py:Agent            → ORM Model (MySQL agent 表)
+    - schemas/agent.py:AgentCreate/Update → Pydantic DTO
+
+  Java 对应:
+    AgentService ≈ AgentServiceImpl.java
+
+【API Key 管理】
+  Agent 支持 API Key 认证，外部系统可通过 API Key 调用该 Agent 的数据分析能力。
+  - generate: 生成新的 32 字符 Key
+  - mask:    脱敏显示 (前4后4)
+  - toggle:  启用/禁用
+  - reset:   重新生成 (旧 Key 失效)
+"""
 import secrets
 from typing import Optional, List
 from sqlalchemy import select, func

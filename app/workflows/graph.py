@@ -1,5 +1,49 @@
 """
-工作流图定义 — 对齐 Java DataAgentConfiguration.nl2sqlGraph
+LangGraph 工作流拓扑定义 — 对齐 Java DataAgentConfiguration.nl2sqlGraph
+
+【在系统中的地位】
+  本文件是整个后端的"神经网络"——它定义了 16 个节点的连接方式、数据流转路径。
+  StateGraph 是 LangGraph 提供的有限状态机框架，包含节点(nodes)和边(edges)。
+
+【模块连接】
+  上游 (谁使用这个 graph):
+    - streaming_graph_controller.py  → compiled_workflow.astream()  SSE 流式执行
+    - graph_controller.py            → compiled_workflow.ainvoke()  同步执行
+
+  中层 (graph 内部调用):
+    - workflows/state.py             → WorkflowState 定义 state 类型
+    - workflows/nodes/*.py           → 16 个节点函数 (被 add_node 注册)
+
+  下游 (node 输出 → SSE 前端):
+    - streaming_graph_controller.py  → 消费 astream 事件，转为 SSE 发送给前端
+
+  Java 对应:
+    本文件 = DataAgentConfiguration.java 中的 nl2sqlGraph() 方法
+    compiled_workflow = Spring AI 的 CompiledGraph
+
+【核心概念 — 路由函数】
+  graph.py 中的每个 route_after_* 函数对应 Java 的 Dispatcher:
+    Python                           Java
+    ─────────────────────────────────────────────
+    route_after_intent()          → IntentRecognitionDispatcher
+    route_after_query_rewrite()   → QueryEnhanceDispatcher
+    route_after_schema_recall()   → SchemaRecallDispatcher
+    route_after_table_relation()  → TableRelationDispatcher (含重试)
+    route_after_feasibility()     → FeasibilityAssessmentDispatcher
+    route_after_plan_executor()   → PlanExecutorDispatcher (循环调度核心)
+    route_after_sql_generate()    → SqlGenerateDispatcher
+    route_after_sql_execute()     → SQLExecutorDispatcher
+    route_after_python_execute()  → PythonExecutorDispatcher
+    route_after_human_feedback()  → HumanFeedbackDispatcher
+
+【重点 — PlanExecutor 循环拓扑】
+  这是最复杂的设计: PlanExecutor 不是线性节点，而是一个循环调度器。
+
+  PlanExecutor → 根据 plan_current_step 和 query_plan 决定 next_node:
+    - 如果当前步骤是 SQL  → 进入 sql_generate → semantic_consistency → sql_execute → 回到 PlanExecutor
+    - 如果当前步骤是 Python → 进入 python_generate → python_execute → python_analyze → 回到 PlanExecutor
+    - 如果所有步骤完成      → 进入 report_generator → END
+    - 如果需要人工确认      → 进入 human_feedback → (approve/reject) → 回到 PlanExecutor/Planner
 
 完整拓扑（PlanExecutor 循环调度）:
 START → IntentRecognition
@@ -123,10 +167,23 @@ def route_after_python_execute(state: WorkflowState) -> Literal["python_analyze"
 
 
 # ========== 构建工作流图 ==========
+#
+# 【阶段划分】
+#   第一阶段 (前置处理): Intent → Knowledge → Rewrite → Schema → Relation → Feasibility → Planner
+#     职责: 理解用户意图、召回知识、发现数据库结构、生成执行计划
+#     特点: 线性流程，任何节点失败直接 END
+#
+#   第二阶段 (循环调度): PlanExecutor ←→ {SQL流水线, Python流水线}
+#     职责: 逐步执行计划中的每个步骤，SQL 和 Python 交替执行
+#     特点: PlanExecutor 是循环中枢，每一步执行完都回到它决定下一步
+#
+#   第三阶段 (收尾): ReportGenerator → END
+#     职责: 汇总所有结果，生成 HTML/Markdown 报告
+#     特点: 到达这里意味着所有步骤执行完毕
 
 workflow = StateGraph(WorkflowState)
 
-# 添加所有节点
+# 添加所有节点 — 每个节点对应 workflows/nodes/ 下的一个 .py 文件
 workflow.add_node("intent_recognition", intent_recognition_node)
 workflow.add_node("knowledge_recall", knowledge_recall_node)
 workflow.add_node("query_rewrite", query_rewrite_node)
@@ -144,10 +201,11 @@ workflow.add_node("python_analyze", python_analyze_node)
 workflow.add_node("report_generator", report_generator_node)
 workflow.add_node("human_feedback", human_feedback_node)
 
-# 入口
+# 入口 — 所有请求都从意图识别开始
 workflow.set_entry_point("intent_recognition")
 
 # ===== 第一阶段：前置处理链 =====
+# Intent → (data_analysis) → Knowledge → QueryRewrite → Schema → TableRelation → Feasibility → Planner
 workflow.add_conditional_edges("intent_recognition", route_after_intent, {
     "knowledge_recall": "knowledge_recall",
     "end": END,
@@ -164,60 +222,67 @@ workflow.add_conditional_edges("schema_recall", route_after_schema_recall, {
 workflow.add_conditional_edges("table_relation", route_after_table_relation, {
     "feasibility": "feasibility",
     "end": END,
-    "table_relation": "table_relation",
+    "table_relation": "table_relation",  # 自循环：重试表关系构建
 })
 workflow.add_conditional_edges("feasibility", route_after_feasibility, {
     "planner": "planner",
     "end": END,
 })
 
-# ===== 第二阶段：Planner → PlanExecutor =====
+# ===== 第二阶段：Planner → PlanExecutor (进入循环调度) =====
 workflow.add_edge("planner", "plan_executor")
 
 # ===== 第三阶段：PlanExecutor 循环调度 =====
+# ★ 这是整个拓扑的核心: PlanExecutor 根据当前步骤的 type 决定走哪条流水线
+#   每次流水线执行完都会回到 PlanExecutor，形成循环
 workflow.add_conditional_edges("plan_executor", route_after_plan_executor, {
     "sql_generate": "sql_generate",
     "python_generate": "python_generate",
-    "report_generator": "report_generator",
-    "human_feedback": "human_feedback",
-    "planner": "planner",
+    "report_generator": "report_generator",  # 所有步骤完成
+    "human_feedback": "human_feedback",       # 需要人工确认
+    "planner": "planner",                     # 人工拒绝 → 重新规划
     "end": END,
 })
 
 # ===== SQL 流水线 =====
+# SqlGenerate → SemanticConsistency → SqlExecute → 回到 PlanExecutor
+# 含重试: semantic check 失败 → 重新 sql_generate; execute 失败 → 重新 sql_generate
 workflow.add_conditional_edges("sql_generate", route_after_sql_generate, {
     "semantic_consistency": "semantic_consistency",
-    "sql_generate": "sql_generate",
+    "sql_generate": "sql_generate",  # 自循环：SQL 生成失败重试
     "end": END,
 })
 workflow.add_conditional_edges("semantic_consistency", route_after_semantic_check, {
     "sql_execute": "sql_execute",
-    "sql_generate": "sql_generate",
+    "sql_generate": "sql_generate",  # 语义校验失败 → 重新生成 SQL
 })
 workflow.add_conditional_edges("sql_execute", route_after_sql_execute, {
-    "plan_executor": "plan_executor",
-    "sql_generate": "sql_generate",
+    "plan_executor": "plan_executor",  # 成功 → 回到调度器
+    "sql_generate": "sql_generate",    # 执行失败 → 重新生成 SQL
 })
 
 # ===== Python 流水线 =====
+# PythonGenerate → PythonExecute → PythonAnalyze → 回到 PlanExecutor
+# 含重试: execute 失败 → 重新 python_generate (最多 N 次后降级)
 workflow.add_edge("python_generate", "python_execute")
 workflow.add_conditional_edges("python_execute", route_after_python_execute, {
     "python_analyze": "python_analyze",
-    "python_generate": "python_generate",
+    "python_generate": "python_generate",  # 执行失败重试
     "end": END,
 })
-workflow.add_edge("python_analyze", "plan_executor")
+workflow.add_edge("python_analyze", "plan_executor")  # 分析完回到调度器
 
 # ===== 报告生成 → END =====
 workflow.add_edge("report_generator", END)
 
 # ===== Human Feedback 路由 =====
+# HumanFeedback 节点通过 LangGraph interrupt 机制暂停，等待外部 resume
 workflow.add_conditional_edges("human_feedback", route_after_human_feedback, {
-    "plan_executor": "plan_executor",
-    "planner": "planner",
+    "plan_executor": "plan_executor",  # 批准 → 继续执行
+    "planner": "planner",              # 拒绝 → 重新规划
     "end": END,
 })
 
-# 编译
+# 编译 — 将声明的拓扑编译为可执行的 LangGraph 状态图
 compiled_workflow = workflow.compile()
 logger.info("Workflow compiled: PlanExecutor cycle topology with %d nodes", len(workflow.nodes))

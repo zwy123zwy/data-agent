@@ -1,6 +1,33 @@
 """
-人工反馈节点（Human Feedback Node） — 对齐 Java HumanFeedbackNode
-使用 LangGraph interrupt() 在图内暂停，等待外部审批
+人工反馈节点 — 对齐 Java HumanFeedbackNode
+
+【在系统中的地位】
+  这是 Human-in-the-Loop 的核心节点。它使用 LangGraph 的 interrupt() 机制
+  在图执行中途暂停，等待用户在界面上审批或拒绝执行计划。
+
+【模块连接】
+  上游 (由谁路由到此):
+    - plan_executor → human_review_enabled=True 时路由而来
+
+  下游 (写入 state):
+    - state["human_feedback_data"] → 用户反馈内容 (action + reason)
+    - state["human_next_node"]     → 审批通过 → plan_executor / 拒绝 → planner
+    - state["plan_repair_count"]   → 拒绝次数 (超过 MAX_REJECT_COUNT 则终止)
+
+  调用链:
+    - LangGraph interrupt() → 暂停图执行
+    - 前端通过 SSE event:paused 收到通知
+    - 用户审批后，前端再次调用 /api/stream/search?threadId=...
+    - Command(resume={...}) 恢复执行，feedback 值返回给 interrupt() 的调用处
+
+  路由 (graph.py route_after_human_feedback):
+    - approve → plan_executor (继续执行后续步骤)
+    - reject  → planner (重新生成计划)
+    - reject(超限) → END (拒绝次数太多，终止)
+
+  Java 对应:
+    human_feedback_node ≈ HumanFeedbackNode.java
+    interrupt()         ≈ CompiledGraph.interruptBefore(HUMAN_FEEDBACK_NODE)
 """
 from typing import Dict, Any, Literal
 from langgraph.types import interrupt

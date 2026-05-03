@@ -1,6 +1,37 @@
 """
-模型注册表服务
-支持多模型管理和动态切换
+模型注册表服务 — LLM 模型的动态管理和热切换
+
+【在系统中的地位】
+  本服务管理所有 LLM 模型配置 (Chat + Embedding)。支持运行时热切换:
+  用户在前端切换默认模型后，后续所有 LLM 调用自动使用新模型。
+
+【模块连接】
+  上游 (谁调用 ModelRegistry):
+    - api/model_config_controller.py → CRUD API: register, update, delete, test
+    - core/llm.py:LLMService         → (可选) 可通过 registry 动态切换模型
+
+  被依赖:
+    - models/model_config.py         → ModelConfig ORM (MySQL 表映射)
+    - schemas/model_config.py        → Pydantic DTO (请求/响应验证)
+    - openai.OpenAI                  → 同步客户端 (用于模型测试)
+
+  数据存储:
+    - 主存储: MySQL model_config 表 (持久化)
+    - 缓存:   self._cache Dict[str, ModelConfig] (内存加速)
+
+  Java 对应:
+    ModelRegistry ≈ AiModelRegistry.java
+
+【热切换机制】
+  1. 用户 POST /api/model-config/activate/{id}
+  2. 控制器调用 set_default_model(id)
+  3. is_default=True 写入 DB + 更新内存缓存
+  4. 后续 LLM 调用从缓存读取默认模型配置
+  5. 无需重启服务 — 真正的热切换
+
+【扩展字段存储】
+  proxy/path 等扩展字段不在 ModelConfig 表有独立列，
+  而是序列化到 metadata_ JSON 列中。_split_extra_fields() 负责分离。
 """
 from typing import Dict, Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession

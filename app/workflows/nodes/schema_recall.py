@@ -1,5 +1,39 @@
 """
-工作流节点：数据库模式检索
+数据库 Schema 检索节点 — 对齐 Java SchemaRecallNode
+
+【在系统中的地位】
+  这个节点连接 Agent 的数据源，读取实际的数据库表结构 (DDL)，
+  将结构化信息转为 LLM 能理解的文本格式，作为 SQL 生成的上下文。
+
+【模块连接】
+  上游 (由谁路由到此):
+    - query_rewrite → 查询改写成功后路由而来
+
+  下游 (写入 state):
+    - state["schema"]      → DDL 文本 (如 "CREATE TABLE users (id INT, name VARCHAR...)")
+    - state["schema_info"] → 结构化 dict {tables: [...], relations: [...]}
+
+  调用链:
+    - AgentDatasourceService.get_active_datasource() → 获取 Agent 激活的数据源连接
+    - SchemaService.get_database_ddl()               → 查询 information_schema 获取 DDL
+    - SchemaService.get_database_schema()            → 返回结构化表/列信息
+
+  路由 (graph.py):
+    - schema_recall → table_relation (如果 schema 非空)
+    - schema_recall → END (如果无 schema)
+
+  Java 对应:
+    schema_recall_node ≈ SchemaRecallNode.java
+    SchemaService       ≈ SchemaService.java
+
+【DDL 格式示例】
+  CREATE TABLE users (
+    id INT PRIMARY KEY AUTO_INCREMENT COMMENT '用户ID',
+    name VARCHAR(100) NOT NULL COMMENT '用户名',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间'
+  );
+  ...
+  这种格式 LLM 可以直接理解，用于生成准确的 SQL。
 """
 from ..state import WorkflowState
 from ...services.agent_datasource_service import AgentDatasourceService

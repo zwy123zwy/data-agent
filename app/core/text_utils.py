@@ -1,6 +1,21 @@
 """
-LLM 响应文本工具
-处理 LLM 返回的 markdown 代码块、JSON 清理等
+LLM 响应文本工具 — 清洗大模型输出
+
+【在系统中的地位】
+  大模型经常返回带 markdown 代码块的响应 (如 ```sql ... ```)。
+  clean_code_block() 是所有工作流节点的"后处理器"，剥离代码块标记，
+  提取纯文本内容。
+
+【模块连接】
+  调用者 (几乎所有工作流节点都依赖此工具):
+    - workflows/nodes/sql_generate.py       → 剥离 ```sql ... ```
+    - workflows/nodes/python_generate.py    → 剥离 ```python ... ```
+    - workflows/nodes/report_generator.py   → 剥离 ```json ... ```
+    - workflows/nodes/planner.py            → 剥离 ```json ... ```
+    - core/code_executor.py (AISimExecutor) → 剥离 ```json ... ```
+
+  Java 对应:
+    clean_code_block() ≈ code block extraction in TextUtils.java
 """
 import re
 import logging
@@ -11,30 +26,26 @@ logger = logging.getLogger(__name__)
 def clean_code_block(text: str, lang: str = None) -> str:
     """清理 LLM 返回的 markdown 代码块包裹
 
+    大模型输出通常为:
+      ```sql
+      SELECT * FROM users
+      ```
+    此函数提取内容: SELECT * FROM users
+
     Args:
         text: LLM 原始响应文本
-        lang: 可选的语言标识 (如 "json", "sql", "python")，用于更精确匹配
+        lang: 可选语言标识 ("json", "sql", "python")，精确匹配 ```<lang>
 
     Returns:
         清理后的纯文本内容
-
-    Examples:
-        >>> clean_code_block("```sql\\nSELECT * FROM t\\n```")
-        'SELECT * FROM t'
-
-        >>> clean_code_block("```json\\n{"key": "val"}\\n```", lang="json")
-        '{"key": "val"}'
     """
     text = text.strip()
 
     if lang:
-        # 精确匹配指定语言的代码块
         text = re.sub(rf'^```{re.escape(lang)}\s*\n?', '', text, flags=re.IGNORECASE)
     else:
-        # 匹配任意语言的代码块
         text = re.sub(r'^```(?:\w+)?\s*\n?', '', text)
 
-    # 移除结尾的 ```
     text = re.sub(r'\n?\s*```\s*$', '', text)
 
     return text.strip()

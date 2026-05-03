@@ -1,6 +1,53 @@
 """
 流式查询 API — 对齐 Java GraphController + GraphServiceImpl
-使用 SSE (Server-Sent Events) + LangGraph astream_events 实现 Token 级流式输出
+
+【在系统中的地位】
+  这是整个后端最重要的 API 文件。前端的所有数据分析请求都通过这里的
+  SSE (Server-Sent Events) 端点进入，驱动 LangGraph 工作流执行。
+
+【模块连接】
+  上游 (前端 → 本文件):
+    - 前端 Vue 应用 → GET /api/stream/search?agentId=&query=...
+    - 前端 Vue 应用 → POST /api/query/stream (JSON body)
+
+  本文件 → 中层:
+    - compiled_workflow.astream()         → 异步遍历 LangGraph 工作流
+    - AgentService.get_agent()            → 验证 Agent 是否存在
+    - AgentDatasourceService.get_active_datasource() → 验证数据源
+
+  本文件 → 下游 (前端):
+    - SSE event stream → text/event-stream 格式
+    - 事件类型: start, intent, knowledge, rewrite, schema, plan, sql, ...
+
+  Java 对应:
+    streaming_graph_controller.py ≈ GraphController.java + GraphServiceImpl.java (合一)
+
+【SSE 事件流说明】
+  前端通过 EventSource API 监听以下事件:
+
+  event: start      → 开始处理
+  event: intent     → 意图识别结果 (data_analysis / chitchat)
+  event: knowledge  → 知识召回结果
+  event: rewrite    → 查询改写结果
+  event: schema     → Schema 召回完成
+  event: table_relation → 表关系构建完成
+  event: feasibility → 可行性评估结果
+  event: plan       → 执行计划 (textType: JSON)
+  event: plan_step  → 当前执行步骤
+  event: sql        → 生成的 SQL (textType: SQL)
+  event: semantic_check → 语义校验结果
+  event: sql_result → SQL 执行结果 (textType: JSON)
+  event: sql_error  → SQL 执行错误
+  event: python_code → Python 代码 (textType: Python)
+  event: python_execute → Python 执行结果
+  event: python_analysis → Python 分析结论
+  event: report     → 最终报告 (textType: Markdown)
+  event: paused     → 暂停等待人工反馈
+  event: done       → 处理完成
+  event: error      → 错误信息
+
+  每个事件包含 textType 字段 (SQL/JSON/HTML/Markdown/Python)，
+  前端根据 textType 选择不同的渲染组件。
 """
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse

@@ -1,6 +1,68 @@
 """
-计划执行调度节点（Plan Executor Node） — 对齐 Java PlanExecutorNode
-作为图内的循环调度器：校验 Plan → 决定下一步 → 步骤推进 → 完成检测
+计划执行调度节点 — 对齐 Java PlanExecutorNode
+
+【在系统中的地位】
+  这是整个 LangGraph 工作流中最核心的节点——循环调度器。
+  它不是一次性执行完的节点，而是会被反复进入多次:
+    SQL 步骤执行完 → 回到 PlanExecutor → 决定下一步
+    Python 步骤执行完 → 回到 PlanExecutor → 决定下一步
+
+【模块连接】
+  上游 (谁路由到 PlanExecutor):
+    - planner       → 首次进入 (计划刚生成)
+    - sql_execute   → SQL 步骤执行完回来 (循环)
+    - python_analyze → Python 步骤执行完回来 (循环)
+    - human_feedback → 人工审批通过后回来 (循环)
+
+  下游 (PlanExecutor 决定路由到哪):
+    - sql_generate     → 当前步骤需要生成 SQL
+    - python_generate  → 当前步骤需要生成 Python
+    - report_generator → 所有步骤执行完毕
+    - human_feedback   → 需要人工确认
+    - planner          → 计划校验失败，重新规划
+
+  读取 state:
+    - state["query_plan"]           → 执行计划 JSON
+    - state["plan_current_step"]    → 当前步骤编号
+    - state["human_review_enabled"] → 是否启用人工复核
+
+  写入 state:
+    - state["plan_next_node"]       → 决定下一个要执行的节点
+    - state["plan_validation_status"] → 计划校验是否通过
+    - state["plan_repair_count"]    → 修复尝试次数
+
+  Java 对应:
+    plan_executor_node ≈ PlanExecutorNode.java (最复杂的节点)
+    route_after_plan_executor ≈ PlanExecutorDispatcher.java
+
+【Plan 结构 (query_plan JSON)】
+  {
+    "title": "数据分析计划",
+    "description": "...",
+    "execution_plan": [
+      {
+        "step": 1,
+        "tool_to_use": "SQL_GENERATE_NODE",
+        "tool_parameters": {
+          "instruction": "查询本月的销售总额"
+        }
+      },
+      {
+        "step": 2,
+        "tool_to_use": "PYTHON_GENERATE_NODE",
+        "tool_parameters": {
+          "instruction": "绘制月度销售趋势图"
+        }
+      },
+      {
+        "step": 3,
+        "tool_to_use": "REPORT_GENERATOR_NODE",
+        "tool_parameters": {
+          "summary_and_recommendations": "..."
+        }
+      }
+    ]
+  }
 """
 from typing import Dict, Any, Literal
 import json

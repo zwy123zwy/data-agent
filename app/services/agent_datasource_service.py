@@ -1,3 +1,30 @@
+"""
+Agent-数据源关联服务 — 管理多对多绑定关系
+
+【在系统中的地位】
+  Agent 和数据源之间是多对多关系: 一个 Agent 可以绑定多个数据源，
+  一个数据源也可以被多个 Agent 共享。但同一时刻，一个 Agent 只有一个
+  "激活"的数据源 (is_active=True)。
+
+【模块连接】
+  上游 (谁调用 AgentDatasourceService):
+    - api/agent_datasource_controller.py → 绑定/解绑/列表/激活 API
+    - api/streaming_graph_controller.py  → 流式查询前获取激活数据源
+    - workflows/nodes/schema_recall.py   → 获取激活数据源用于 Schema 发现
+
+  被依赖:
+    - models/agent_datasource.py:AgentDatasource → ORM Model (MySQL 关联表)
+    - models/agent.py:Agent                       → Agent ORM Model
+    - models/datasource.py:Datasource             → Datasource ORM Model
+
+  Java 对应:
+    AgentDatasourceService ≈ AgentDatasourceServiceImpl.java
+
+【激活机制】
+  一个 Agent 只能有一个激活数据源。当绑定新数据源并设置为激活时，
+  旧数据源的 is_active 自动设为 False。工作流执行时通过
+  get_active_datasource() 获取当前激活的数据源。
+"""
 from typing import Optional, List
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,7 +35,7 @@ from ..schemas.agent_datasource import AgentDatasourceCreate
 
 
 class AgentDatasourceService:
-    """Agent-Datasource 关联业务逻辑服务"""
+    """Agent-Datasource 多对多关联管理"""
 
     @staticmethod
     async def bind_datasource(

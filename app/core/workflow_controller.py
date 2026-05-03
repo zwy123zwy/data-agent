@@ -1,6 +1,34 @@
 """
-工作流控制器
-支持工作流的暂停、恢复、取消
+工作流控制器 — Human-in-the-Loop 的生命周期管理
+
+【在系统中的地位】
+  本控制器管理所有工作流运行时的生命周期状态 (running/paused/cancelled)。
+  它是 Human Feedback 机制的底层支撑——当工作流需要人工审批时，
+  WorkflowController 暂停执行、等待用户反馈、然后恢复或取消。
+
+【模块连接】
+  上游 (谁调用 WorkflowController):
+    - api/streaming_graph_controller.py → 创建/管理 SSE 流式工作流
+    - api/graph_controller.py           → 创建/管理同步工作流
+    - workflows/nodes/human_feedback_node.py → 暂停等待人工反馈
+
+  下游 (前端):
+    - 前端通过 SSE event:paused 接收暂停通知
+    - 前端通过 resume API 发送反馈后恢复执行
+
+  Java 对应:
+    WorkflowController ≈ LangGraph interrupt 机制 + WorkflowStateManager
+
+【Human Feedback 流程】
+  1. 用户发起查询 (humanFeedback=true)
+  2. PlanExecutor → HumanFeedbackNode
+  3. LangGraph interrupt 触发，工作流暂停
+  4. WorkflowController 记录暂停状态 (status=paused)
+  5. SSE event:paused 发送给前端
+  6. 用户在前端审批/拒绝
+  7. 前端再次调用 /api/stream/search?threadId=xxx&humanFeedbackContent=...
+  8. Command(resume={...}) 恢复 LangGraph 执行
+  9. approve → 继续执行 / reject → 重新规划
 """
 from typing import Dict, Optional, Any
 from datetime import datetime

@@ -1,6 +1,42 @@
 """
-报告生成节点（Report Generator Node） — 对齐 Java ReportGeneratorNode
-LLM 动态报告 + ECharts 图表配置推荐 + 步骤结果聚合
+报告生成节点 — 对齐 Java ReportGeneratorNode
+
+【在系统中的地位】
+  这是 LangGraph 工作流的终点节点。它汇总前面所有步骤的结果
+  (SQL 查询结果 + Python 分析 + 图表)，调用 LLM 生成专业报告。
+
+【模块连接】
+  上游 (由谁路由到此):
+    - plan_executor → 所有执行步骤都完成时路由而来
+
+  下游 (写入 state):
+    - state["report"]            → Markdown 格式报告
+    - state["html_report"]        → HTML 格式报告 (含 ECharts 图表)
+    - state["markdown_report"]    → Markdown 报告 (同 report)
+    - state["display_style"]      → ECharts 图表配置 (前端渲染用)
+
+  路由 (graph.py):
+    - report_generator → END (工作流结束)
+
+  读取 state (汇总所有前置步骤的结果):
+    - state["sql_result_list_memory"] → 所有 SQL 步骤的结果
+    - state["python_analysis"]        → Python 分析结论
+    - state["python_output"]          → Python 执行输出
+    - state["python_charts"]          → Python 生成的图表
+    - state["query_plan"]             → 执行计划 (获取 thought_process)
+
+  依赖:
+    - core/llm.py:llm_service.chat() → LLM 生成报告文本 + 图表推荐
+    - ECharts CDN (前端渲染)         → HTML 报告中的图表通过 CDN 加载
+
+  Java 对应:
+    report_generator_node ≈ ReportGeneratorNode.java
+    _recommend_chart()    ≈ data-view-analyze 模块
+
+【报告格式】
+  - Markdown: 纯文本，适合导出和二次编辑
+  - HTML: 内嵌 ECharts 图表，适合浏览器查看
+  两种格式都生成，前端根据需要选择展示
 """
 from typing import Dict, Any
 from ..state import WorkflowState, get_canonical_query

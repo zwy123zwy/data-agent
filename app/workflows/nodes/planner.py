@@ -1,6 +1,40 @@
 """
-计划生成节点（Planner Node） — 对齐 Java PlannerNode
-生成 Plan{thought_process, execution_plan[]}，Planner 不直接生成 SQL
+计划生成节点 — 对齐 Java PlannerNode
+
+【在系统中的地位】
+  Planner 是工作流的"大脑"——它将用户的自然语言问题转化为结构化的
+  多步骤执行计划 (JSON)，每个步骤指定要使用的工具和具体指令。
+
+【模块连接】
+  上游 (由谁路由到此):
+    - feasibility → 可行性评估通过后路由而来
+    - plan_executor → 计划校验失败时回来修复 (通过 human_feedback reject)
+
+  下游 (写入 state):
+    - state["query_plan"]       → 执行计划 JSON (execution_plan + thought_process)
+    - state["is_complex_query"] → 是否多步骤 (超过1步为复杂查询)
+
+  读取 state (LLM 生成计划需要的上下文):
+    - state["schema"]              → 数据库 DDL 文本
+    - state["recalled_knowledge"]  → 召回的知识
+    - state["semantic_model_prompt"] → 语义模型 (字段别名)
+    - state["plan_validation_error"] → 上次计划被拒绝的原因 (重规划时)
+
+  路由 (graph.py):
+    - planner → plan_executor (无条件，总是进入调度器)
+
+  Java 对应:
+    planner_node ≈ PlannerNode.java
+
+【Plan JSON 结构】
+  {
+    "thought_process": "分析思路...",
+    "execution_plan": [
+      {"step": 1, "tool_to_use": "SQL_GENERATE_NODE", "tool_parameters": {"instruction": "..."}},
+      {"step": 2, "tool_to_use": "PYTHON_GENERATE_NODE", "tool_parameters": {"instruction": "..."}},
+      {"step": 3, "tool_to_use": "REPORT_GENERATOR_NODE", "tool_parameters": {"summary_and_recommendations": "..."}}
+    ]
+  }
 """
 from typing import Dict, Any
 from ..state import WorkflowState, get_canonical_query

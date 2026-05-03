@@ -1,6 +1,27 @@
 """
-知识召回节点（Knowledge Recall Node）
-从向量数据库检索相关知识
+知识召回节点 — RAG 的证据检索入口
+
+【在系统中的地位】
+  这是 RAG 工作流的关键节点。它将用户的自然语言问题转为向量，
+  在知识库中检索最相关的知识，作为后续 LLM 生成的"证据"。
+
+【模块连接】
+  上游 (由谁路由到此):
+    - intent_recognition → state["intent"] == "data_analysis" 时路由而来
+
+  下游 (写入 state):
+    - state["recalled_knowledge"] → 格式化的知识文本 (注入 LLM prompt)
+    - state["knowledge_items"]    → 结构化的知识列表 (for 前端展示)
+
+  调用:
+    - services/knowledge_service.py:KnowledgeService.search_knowledge()
+      → 向量库语义检索 → 返回 top_k 条最相关知识
+
+  路由 (graph.py):
+    - knowledge_recall → query_rewrite (无条件，总是继续)
+
+  Java 对应:
+    knowledge_recall_node ≈ EvidenceRecallNode.java
 """
 from typing import Dict, Any
 from ..state import WorkflowState
