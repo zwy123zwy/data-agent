@@ -30,6 +30,39 @@ class ModelRegistry:
             self._cache[model.name] = model
         logger.info(f"Loaded {len(self._cache)} models from database")
 
+    # 需要存入 metadata 的扩展字段
+    _EXTRA_FIELDS = {
+        "completions_path", "embeddings_path",
+        "proxy_enabled", "proxy_host", "proxy_port",
+        "proxy_username", "proxy_password",
+    }
+
+    # DB 列名 (可用于 ModelConfig 构造)
+    _DB_FIELDS = {
+        "name", "type", "provider", "model_id", "api_key", "api_base",
+        "temperature", "max_tokens", "enabled", "is_default", "metadata_",
+    }
+
+    @classmethod
+    def _split_extra_fields(cls, data: Dict) -> Dict:
+        """将扩展字段提取到 metadata_ 中"""
+        extra = {}
+        for key in list(data.keys()):
+            if key in cls._EXTRA_FIELDS and data[key] is not None:
+                extra[key] = data.pop(key)
+            elif key in cls._EXTRA_FIELDS:
+                data.pop(key, None)
+        if "metadata" in data:
+            data["metadata_"] = data.pop("metadata")
+        if extra:
+            existing_meta = data.get("metadata_") or {}
+            if isinstance(existing_meta, dict):
+                existing_meta.update(extra)
+                data["metadata_"] = existing_meta
+            else:
+                data["metadata_"] = extra
+        return data
+
     async def register_model(self, config: ModelConfigCreate) -> ModelConfig:
         """注册模型"""
         # 如果设置为默认，先取消其他默认模型
@@ -40,10 +73,11 @@ class ModelRegistry:
                 .values(is_default=False)
             )
 
-        # 创建模型配置
+        # 创建模型配置 — 过滤掉非 DB 字段
         data = config.model_dump()
-        if "metadata" in data:
-            data["metadata_"] = data.pop("metadata")
+        data = self._split_extra_fields(data)
+        # 移除不属于 DB 列的键
+        data = {k: v for k, v in data.items() if k in self._DB_FIELDS}
         model = ModelConfig(**data)
         self.db.add(model)
         await self.db.commit()
@@ -111,8 +145,9 @@ class ModelRegistry:
 
         # 更新字段
         update_dict = update_data.model_dump(exclude_unset=True)
-        if "metadata" in update_dict:
-            update_dict["metadata_"] = update_dict.pop("metadata")
+        update_dict.pop("id", None)  # 不更新 id 字段
+        update_dict = self._split_extra_fields(update_dict)
+        update_dict = {k: v for k, v in update_dict.items() if k in self._DB_FIELDS}
         for key, value in update_dict.items():
             setattr(model, key, value)
 
@@ -170,24 +205,65 @@ class ModelRegistry:
         return model
 
     async def test_model(self, model_id: int, prompt: str = "Hello, how are you?") -> Dict:
-        """测试模型"""
+        """测试已保存的模型"""
         model = await self.get_model_by_id(model_id)
         if not model:
             return {"success": False, "error": "Model not found"}
 
+        return await self._do_test(
+            api_key=model.api_key,
+            api_base=model.api_base,
+            model_id=model.model_id,
+            temperature=model.temperature,
+            max_tokens=model.max_tokens or 100,
+            prompt=prompt,
+        )
+
+    async def test_model_with_config(
+        self,
+        provider: Optional[str] = None,
+        api_key: Optional[str] = None,
+        api_base: Optional[str] = None,
+        model_id: Optional[str] = None,
+        model_type: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        prompt: Optional[str] = None,
+    ) -> Dict:
+        """测试模型配置 (无需预存) — 对齐 Java POST /api/model-config/test"""
+        if not api_key or not model_id:
+            return {"success": False, "error": "apiKey 和 modelName 不能为空"}
+
+        return await self._do_test(
+            api_key=api_key,
+            api_base=api_base or "",
+            model_id=model_id,
+            temperature=temperature or 0.0,
+            max_tokens=max_tokens or 100,
+            prompt=prompt or "Hello, how are you?",
+        )
+
+    async def _do_test(
+        self,
+        api_key: str,
+        api_base: str,
+        model_id: str,
+        temperature: float,
+        max_tokens: int,
+        prompt: str,
+    ) -> Dict:
+        """执行实际的模型测试调用"""
         try:
-            # 创建 OpenAI 客户端
             client = OpenAI(
-                api_key=model.api_key,
-                base_url=model.api_base
+                api_key=api_key,
+                base_url=api_base
             )
 
-            # 测试调用
             response = client.chat.completions.create(
-                model=model.model_id,
+                model=model_id,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=model.temperature,
-                max_tokens=model.max_tokens or 100
+                temperature=temperature,
+                max_tokens=max_tokens
             )
 
             return {

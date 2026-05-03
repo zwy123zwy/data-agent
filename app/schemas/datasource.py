@@ -4,20 +4,24 @@ from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 
 class DatasourceBase(BaseModel):
-    """Datasource 基础模型"""
+    """Datasource 基础模型 — camelCase 对齐前端/Java"""
     name: str = Field(..., max_length=100, description="数据源名称")
     type: str = Field(..., pattern="^(mysql|postgresql|sqlite)$", description="数据库类型")
-    database: str = Field(..., max_length=100, description="数据库名")
+    database: str = Field(..., max_length=100, alias="databaseName", description="数据库名")
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class DatasourceCreate(DatasourceBase):
-    """创建 Datasource 请求"""
+    """创建 Datasource 请求 — 前端字段名对齐"""
     host: Optional[str] = Field(None, max_length=255, description="主机地址")
     port: Optional[int] = Field(None, ge=1, le=65535, description="端口号")
     username: Optional[str] = Field(None, max_length=100, description="用户名")
     password: Optional[str] = Field(None, max_length=255, description="密码")
-    connection_url: Optional[str] = Field(None, max_length=500, description="连接字符串（SQLite）")
+    connection_url: Optional[str] = Field(None, max_length=500, alias="connectionUrl", description="连接字符串（SQLite）")
     description: Optional[str] = Field(None, description="数据源描述")
+
+    model_config = ConfigDict(populate_by_name=True)
 
     @field_validator("type")
     @classmethod
@@ -30,32 +34,38 @@ class DatasourceCreate(DatasourceBase):
 
 
 class DatasourceUpdate(BaseModel):
-    """更新 Datasource 请求"""
+    """更新 Datasource 请求 — 前端字段名对齐"""
     name: Optional[str] = Field(None, max_length=100, description="数据源名称")
     host: Optional[str] = Field(None, max_length=255, description="主机地址")
     port: Optional[int] = Field(None, ge=1, le=65535, description="端口号")
     username: Optional[str] = Field(None, max_length=100, description="用户名")
     password: Optional[str] = Field(None, max_length=255, description="密码")
-    connection_url: Optional[str] = Field(None, max_length=500, description="连接字符串")
+    connection_url: Optional[str] = Field(None, max_length=500, alias="connectionUrl", description="连接字符串")
+    database: Optional[str] = Field(None, max_length=100, alias="databaseName", description="数据库名")
     description: Optional[str] = Field(None, description="数据源描述")
     status: Optional[str] = Field(None, pattern="^(active|inactive|deleted)$", description="通用状态")
 
+    model_config = ConfigDict(populate_by_name=True)
 
-class DatasourceResponse(DatasourceBase):
-    """Datasource 响应（不包含密码）"""
+
+class DatasourceResponse(BaseModel):
+    """Datasource 响应 — camelCase 对齐前端"""
     id: int
+    name: Optional[str] = None
+    type: Optional[str] = None
     host: Optional[str] = None
     port: Optional[int] = None
+    database: Optional[str] = Field(None, alias="databaseName")
     username: Optional[str] = None
-    connection_url: Optional[str] = None
-    status: str = "active"
-    test_status: str
+    connection_url: Optional[str] = Field(None, alias="connectionUrl")
+    status: Optional[str] = "active"
+    test_status: Optional[str] = Field(None, alias="testStatus")
     description: Optional[str] = None
-    creator_id: Optional[int] = None
-    created_at: datetime
-    updated_at: datetime
+    creator_id: Optional[int] = Field(None, alias="creatorId")
+    created_at: Optional[datetime] = Field(None, alias="createTime")
+    updated_at: Optional[datetime] = Field(None, alias="updateTime")
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class DatasourceListResponse(BaseModel):

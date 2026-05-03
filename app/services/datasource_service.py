@@ -37,11 +37,19 @@ class DatasourceService(BaseService[Datasource]):
 
     @staticmethod
     async def list_datasources(
-        db: AsyncSession, type: Optional[str] = None, skip: int = 0, limit: int = 100,
+        db: AsyncSession,
+        type: Optional[str] = None,
+        status: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 100,
     ) -> tuple[List[Datasource], int]:
-        filters = [Datasource.type == type] if type else None
+        filters = []
+        if type:
+            filters.append(Datasource.type == type)
+        if status:
+            filters.append(Datasource.status == status)
         return await DatasourceService.list(
-            db, filters=filters, order_by=Datasource.created_at.desc(), skip=skip, limit=limit,
+            db, filters=filters or None, order_by=Datasource.created_at.desc(), skip=skip, limit=limit,
         )
 
     @staticmethod

@@ -19,26 +19,30 @@ async def create_datasource(datasource_data: DatasourceCreate, db: AsyncSession 
     return datasource
 
 
-@router.get("", response_model=DatasourceListResponse, summary="列出所有数据源")
+@router.get("", response_model=list[DatasourceResponse], summary="列出所有数据源")
 async def list_datasources(
     type: Optional[str] = Query(None, description="类型过滤: mysql/postgresql/sqlite"),
+    status: Optional[str] = Query(None, description="状态过滤: active/inactive/deleted"),
     skip: int = Query(0, ge=0, description="分页偏移"),
     limit: int = Query(100, ge=1, le=1000, description="每页数量"),
     db: AsyncSession = Depends(get_db),
 ):
-    """列出所有数据源，支持分页和类型过滤"""
-    datasources, total = await DatasourceService.list_datasources(db, type, skip, limit)
-    return DatasourceListResponse(total=total, items=datasources)
+    """列出所有数据源，支持分页和类型/状态过滤 — 对齐 Java 返回裸数组"""
+    datasources, total = await DatasourceService.list_datasources(db, type, status, skip, limit)
+    return datasources
 
 
 @router.get("/types", summary="获取支持的数据库类型")
 async def list_datasource_types():
-    """返回支持的数据库类型列表"""
-    return [
-        {"value": "mysql", "label": "MySQL"},
-        {"value": "postgresql", "label": "PostgreSQL"},
-        {"value": "sqlite", "label": "SQLite"},
-    ]
+    """返回支持的数据库类型列表 — 对齐 Java DatasourceType {code, typeName, dialect, protocol, displayName}"""
+    return {"success": True, "message": "success", "data": [
+        {"code": 1, "typeName": "mysql",      "dialect": "MySQL",     "protocol": "mysql",      "displayName": "MySQL"},
+        {"code": 2, "typeName": "postgresql", "dialect": "PostgreSQL","protocol": "postgresql", "displayName": "PostgreSQL"},
+        {"code": 3, "typeName": "sqlite",     "dialect": "SQLite",    "protocol": "sqlite",     "displayName": "SQLite"},
+        {"code": 4, "typeName": "oracle",     "dialect": "Oracle",    "protocol": "oracle",     "displayName": "Oracle"},
+        {"code": 5, "typeName": "mssql",      "dialect": "SQLServer", "protocol": "mssql",      "displayName": "SQL Server"},
+        {"code": 6, "typeName": "clickhouse", "dialect": "ClickHouse","protocol": "clickhouse", "displayName": "ClickHouse"},
+    ]}
 
 
 @router.get("/{datasource_id}", response_model=DatasourceResponse, summary="获取数据源详情")
@@ -68,12 +72,11 @@ async def delete_datasource(datasource_id: int, db: AsyncSession = Depends(get_d
     return None
 
 
-@router.post("/{datasource_id}/test", response_model=DatasourceTestResponse, summary="测试数据源连接")
+@router.post("/{datasource_id}/test", summary="测试数据源连接")
 async def test_datasource(datasource_id: int, db: AsyncSession = Depends(get_db)):
-    """测试数据源连接是否正常"""
+    """测试数据源连接是否正常 — 对齐 Java POST /api/datasource/{id}/test"""
     success, message = await DatasourceService.test_connection(db, datasource_id)
-    test_status = "success" if success else "failed"
-    return DatasourceTestResponse(success=success, message=message, test_status=test_status)
+    return {"success": True, "message": message, "data": success}
 
 
 @router.get("/{datasource_id}/tables", summary="获取数据源的表列表")

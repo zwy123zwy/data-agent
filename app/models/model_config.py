@@ -25,3 +25,32 @@ class ModelConfig(Base):
     metadata_ = Column("metadata", JSON, comment="其他配置")
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    # 从 metadata_ JSON 暴露的扩展属性 (对齐 Java)
+    @property
+    def completions_path(self) -> Optional[str]:
+        return (self.metadata_ or {}).get("completions_path")
+
+    @property
+    def embeddings_path(self) -> Optional[str]:
+        return (self.metadata_ or {}).get("embeddings_path")
+
+    @property
+    def proxy_enabled(self) -> Optional[bool]:
+        return (self.metadata_ or {}).get("proxy_enabled")
+
+    @property
+    def proxy_host(self) -> Optional[str]:
+        return (self.metadata_ or {}).get("proxy_host")
+
+    @property
+    def proxy_port(self) -> Optional[int]:
+        return (self.metadata_ or {}).get("proxy_port")
+
+    @property
+    def proxy_username(self) -> Optional[str]:
+        return (self.metadata_ or {}).get("proxy_username")
+
+    @property
+    def proxy_password(self) -> Optional[str]:
+        return (self.metadata_ or {}).get("proxy_password")

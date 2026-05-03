@@ -15,6 +15,17 @@ async def create_agent(agent_data: AgentCreate, db: AsyncSession = Depends(get_d
     return agent
 
 
+@router.get("/list", response_model=list[AgentResponse], summary="[前端] 列出所有Agent")
+async def list_agents_frontend(
+    status: Optional[str] = Query(None, description="状态过滤: draft/published/offline"),
+    keyword: Optional[str] = Query(None, description="关键词搜索 (名称/描述)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """列出所有 Agent — 对齐 Java GET /api/agent/list?status=&keyword="""
+    agents, total = await AgentService.list_agents(db, status=status, keyword=keyword)
+    return agents
+
+
 @router.get("", response_model=AgentListResponse, summary="列出所有Agent")
 async def list_agents(
     status: Optional[str] = Query(None, description="状态过滤: draft/published/offline"),

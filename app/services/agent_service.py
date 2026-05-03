@@ -36,10 +36,16 @@ class AgentService(BaseService[Agent]):
         status: Optional[str] = None,
         skip: int = 0,
         limit: int = 100,
+        keyword: Optional[str] = None,
     ) -> tuple[List[Agent], int]:
         filters = []
         if status:
             filters.append(Agent.status == status)
+        if keyword:
+            kw = f"%{keyword}%"
+            filters.append(
+                (Agent.name.like(kw)) | (Agent.description.like(kw))
+            )
         return await AgentService.list(
             db, filters=filters, order_by=Agent.created_at.desc(), skip=skip, limit=limit
         )

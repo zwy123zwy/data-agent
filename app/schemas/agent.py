@@ -29,19 +29,21 @@ class AgentUpdate(BaseModel):
 
 
 class AgentResponse(AgentBase):
-    """Agent 响应"""
+    """Agent 响应 — camelCase 对齐前端/Java"""
     id: int
     status: str
     avatar: Optional[str] = None
     tags: Optional[str] = None
-    api_key_enabled: bool = False
+    api_key: Optional[str] = Field(None, alias="apiKey", description="API Key(脱敏)")
+    api_key_enabled: bool = Field(False, alias="apiKeyEnabled")
     category: Optional[str] = None
     prompt: Optional[str] = None
-    admin_id: Optional[int] = None
-    created_at: datetime
-    updated_at: datetime
+    admin_id: Optional[int] = Field(None, alias="adminId")
+    human_review_enabled: bool = Field(False, alias="humanReviewEnabled", description="是否启用人工审核")
+    created_at: datetime = Field(..., alias="createTime")
+    updated_at: datetime = Field(..., alias="updateTime")
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class AgentListResponse(BaseModel):
