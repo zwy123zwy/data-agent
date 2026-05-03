@@ -16,7 +16,7 @@ from ..schemas.knowledge import (
     KnowledgeSearchResult
 )
 
-router = APIRouter(prefix="/api/agents/{agent_id}/knowledge", tags=["Knowledge"])
+router = APIRouter(prefix="/api/agent/{agent_id}/knowledge", tags=["Knowledge"])
 
 
 @router.post("", response_model=KnowledgeResponse, status_code=201)

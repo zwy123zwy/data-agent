@@ -5,7 +5,7 @@ from ..core.database import get_db
 from ..schemas.agent import AgentCreate, AgentUpdate, AgentResponse, AgentListResponse
 from ..services.agent_service import AgentService
 
-router = APIRouter(prefix="/api/agents", tags=["Agent管理"])
+router = APIRouter(prefix="/api/agent", tags=["Agent管理"])
 
 
 @router.post("", response_model=AgentResponse, status_code=201, summary="创建Agent")
@@ -70,3 +70,77 @@ async def offline_agent(agent_id: int, db: AsyncSession = Depends(get_db)):
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     return agent
+
+
+# ==================================================================
+# API Key 管理 — 对齐 Java AgentController
+# ==================================================================
+
+@router.get("/{agent_id}/api-key", summary="获取API Key状态")
+async def get_api_key(agent_id: int, db: AsyncSession = Depends(get_db)):
+    """获取脱敏后的 API Key 状态 — 对齐 Java getApiKey"""
+    agent = await AgentService.get_agent(db, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    masked = AgentService._mask_api_key(agent.api_key)
+    return {"success": True, "message": "获取 API Key 成功", "data": {
+        "api_key": masked,
+        "api_key_enabled": agent.api_key_enabled,
+    }}
+
+
+@router.post("/{agent_id}/api-key/generate", summary="生成API Key")
+async def generate_api_key(agent_id: int, db: AsyncSession = Depends(get_db)):
+    """生成 API Key — 对齐 Java generateApiKey"""
+    agent = await AgentService.get_agent(db, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    agent = await AgentService.generate_api_key(db, agent_id)
+    return {"success": True, "message": "生成 API Key 成功", "data": {
+        "api_key": agent.api_key,
+        "api_key_enabled": agent.api_key_enabled,
+    }}
+
+
+@router.post("/{agent_id}/api-key/reset", summary="重置API Key")
+async def reset_api_key(agent_id: int, db: AsyncSession = Depends(get_db)):
+    """重置 API Key — 对齐 Java resetApiKey"""
+    agent = await AgentService.get_agent(db, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    agent = await AgentService.reset_api_key(db, agent_id)
+    return {"success": True, "message": "重置 API Key 成功", "data": {
+        "api_key": agent.api_key,
+        "api_key_enabled": agent.api_key_enabled,
+    }}
+
+
+@router.delete("/{agent_id}/api-key", summary="删除API Key")
+async def delete_api_key(agent_id: int, db: AsyncSession = Depends(get_db)):
+    """删除 API Key — 对齐 Java deleteApiKey"""
+    agent = await AgentService.get_agent(db, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    agent = await AgentService.delete_api_key(db, agent_id)
+    return {"success": True, "message": "删除 API Key 成功", "data": {
+        "api_key": AgentService._mask_api_key(agent.api_key),
+        "api_key_enabled": agent.api_key_enabled,
+    }}
+
+
+@router.post("/{agent_id}/api-key/enable", summary="启用/禁用API Key")
+async def toggle_api_key(
+    agent_id: int,
+    enabled: bool = Query(..., description="true=启用, false=禁用"),
+    db: AsyncSession = Depends(get_db),
+):
+    """启用/禁用 API Key — 对齐 Java toggleApiKey"""
+    agent = await AgentService.get_agent(db, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    agent = await AgentService.toggle_api_key(db, agent_id, enabled)
+    masked = AgentService._mask_api_key(agent.api_key)
+    return {"success": True, "message": "更新 API Key 状态成功", "data": {
+        "api_key": masked,
+        "api_key_enabled": agent.api_key_enabled,
+    }}

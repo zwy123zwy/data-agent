@@ -10,7 +10,7 @@ from ..schemas.model_config import (
     ModelConfigCreate, ModelConfigUpdate, ModelConfigResponse, ModelTestRequest,
 )
 
-router = APIRouter(prefix="/api/model-configs", tags=["模型配置"])
+router = APIRouter(prefix="/api/model-config", tags=["模型配置"])
 
 
 @router.post("", response_model=ModelConfigResponse, status_code=201, summary="创建模型配置")

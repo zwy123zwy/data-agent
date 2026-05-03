@@ -13,7 +13,9 @@ from . import (
     graph_controller,
     streaming_graph_controller,
     model_config_controller,
-    feedback_controller
+    feedback_controller,
+    chat_controller,
+    agent_preset_question_controller,
 )
 
 __all__ = [
@@ -27,5 +29,7 @@ __all__ = [
     "graph_controller",
     "streaming_graph_controller",
     "model_config_controller",
-    "feedback_controller"
+    "feedback_controller",
+    "chat_controller",
+    "agent_preset_question_controller",
 ]

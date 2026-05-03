@@ -14,7 +14,7 @@ from ..schemas.semantic_model import (
     SemanticModelSearchRequest,
 )
 
-router = APIRouter(prefix="/api/agents/{agent_id}/semantic-models", tags=["SemanticModel"])
+router = APIRouter(prefix="/api/agent/{agent_id}/semantic-models", tags=["SemanticModel"])
 
 
 @router.post("", response_model=SemanticModelResponse, status_code=201, summary="创建语义模型")

@@ -9,7 +9,7 @@ from ..schemas.datasource import (
 from ..services.datasource_service import DatasourceService
 from ..services.schema_service import SchemaService
 
-router = APIRouter(prefix="/api/datasources", tags=["Datasource管理"])
+router = APIRouter(prefix="/api/datasource", tags=["Datasource管理"])
 
 
 @router.post("", response_model=DatasourceResponse, status_code=201, summary="创建数据源")

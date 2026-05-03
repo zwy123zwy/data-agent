@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from .core.config import settings
 from .core.database import init_db
 from .core.exception_handlers import register_exception_handlers
+from .core.response_middleware import ApiResponseMiddleware
 from .api import (
     agent_controller,
     datasource_controller,
@@ -25,7 +26,9 @@ from .api import (
     graph_controller,
     streaming_graph_controller,
     model_config_controller,
-    feedback_controller
+    feedback_controller,
+    chat_controller,
+    agent_preset_question_controller,
 )
 
 
@@ -51,6 +54,9 @@ app = FastAPI(
 
 register_exception_handlers(app)
 
+# ApiResponse 包装中间件 — 对齐 Java ApiResponse<T>
+app.add_middleware(ApiResponseMiddleware)
+
 # CORS 中间件
 app.add_middleware(
     CORSMiddleware,
@@ -72,6 +78,8 @@ app.include_router(graph_controller.router)
 app.include_router(streaming_graph_controller.router)
 app.include_router(model_config_controller.router)
 app.include_router(feedback_controller.router)
+app.include_router(chat_controller.router)
+app.include_router(agent_preset_question_controller.router)
 
 
 @app.get("/", tags=["健康检查"])

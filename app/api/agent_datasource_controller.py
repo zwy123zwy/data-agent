@@ -10,7 +10,7 @@ from ..schemas.agent_datasource import (
 from ..schemas.datasource import DatasourceResponse
 from ..services.agent_datasource_service import AgentDatasourceService
 
-router = APIRouter(prefix="/api/agents", tags=["Agent-Datasource关联"])
+router = APIRouter(prefix="/api/agent", tags=["Agent-Datasource关联"])
 
 
 @router.post(

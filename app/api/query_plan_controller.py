@@ -23,7 +23,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/agents/{agent_id}/plans", tags=["QueryPlan"])
+router = APIRouter(prefix="/api/agent/{agent_id}/plans", tags=["QueryPlan"])
 
 
 @router.post("/generate", response_model=GeneratePlanResponse)

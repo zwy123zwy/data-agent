@@ -6,6 +6,7 @@ from datetime import datetime
 class AgentPresetQuestionCreate(BaseModel):
     question: str
     sort_order: int = 0
+    is_active: bool = True
 
 
 class AgentPresetQuestionResponse(BaseModel):

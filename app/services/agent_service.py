@@ -1,3 +1,4 @@
+import secrets
 from typing import Optional, List
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -59,3 +60,60 @@ class AgentService(BaseService[Agent]):
     @staticmethod
     async def offline_agent(db: AsyncSession, agent_id: int) -> Optional[Agent]:
         return await AgentService.update(db, agent_id, {"status": "offline"})
+
+    # ==================================================================
+    # API Key 管理 — 对齐 Java AgentController
+    # ==================================================================
+
+    @staticmethod
+    def _generate_api_key() -> str:
+        """生成 32 字符 API Key"""
+        return secrets.token_hex(16)
+
+    @staticmethod
+    def _mask_api_key(key: Optional[str]) -> Optional[str]:
+        """脱敏 API Key: 前4后4，中间用 **** 替代"""
+        if not key:
+            return None
+        if len(key) <= 8:
+            return key[:2] + "****" + key[-2:]
+        return key[:4] + "****" + key[-4:]
+
+    @staticmethod
+    async def get_api_key_masked(db: AsyncSession, agent_id: int) -> Optional[str]:
+        """获取脱敏后的 API Key"""
+        agent = await AgentService.get_agent(db, agent_id)
+        if not agent:
+            return None
+        return AgentService._mask_api_key(agent.api_key)
+
+    @staticmethod
+    async def generate_api_key(db: AsyncSession, agent_id: int) -> Optional[Agent]:
+        """生成 API Key — 对齐 Java generateApiKey"""
+        api_key = AgentService._generate_api_key()
+        return await AgentService.update(db, agent_id, {
+            "api_key": api_key,
+            "api_key_enabled": True,
+        })
+
+    @staticmethod
+    async def reset_api_key(db: AsyncSession, agent_id: int) -> Optional[Agent]:
+        """重置 API Key — 对齐 Java resetApiKey"""
+        api_key = AgentService._generate_api_key()
+        return await AgentService.update(db, agent_id, {
+            "api_key": api_key,
+            "api_key_enabled": True,
+        })
+
+    @staticmethod
+    async def delete_api_key(db: AsyncSession, agent_id: int) -> Optional[Agent]:
+        """删除 API Key — 对齐 Java deleteApiKey"""
+        return await AgentService.update(db, agent_id, {
+            "api_key": None,
+            "api_key_enabled": False,
+        })
+
+    @staticmethod
+    async def toggle_api_key(db: AsyncSession, agent_id: int, enabled: bool) -> Optional[Agent]:
+        """启用/禁用 API Key — 对齐 Java toggleApiKey"""
+        return await AgentService.update(db, agent_id, {"api_key_enabled": enabled})
