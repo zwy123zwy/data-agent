@@ -38,12 +38,15 @@ async def list_datasources(
 async def list_datasource_types():
     """返回支持的数据库类型列表 — 对齐 Java DatasourceType {code, typeName, dialect, protocol, displayName}"""
     return {"success": True, "message": "success", "data": [
-        {"code": 1, "typeName": "mysql",      "dialect": "MySQL",     "protocol": "mysql",      "displayName": "MySQL"},
-        {"code": 2, "typeName": "postgresql", "dialect": "PostgreSQL","protocol": "postgresql", "displayName": "PostgreSQL"},
-        {"code": 3, "typeName": "sqlite",     "dialect": "SQLite",    "protocol": "sqlite",     "displayName": "SQLite"},
-        {"code": 4, "typeName": "oracle",     "dialect": "Oracle",    "protocol": "oracle",     "displayName": "Oracle"},
-        {"code": 5, "typeName": "mssql",      "dialect": "SQLServer", "protocol": "mssql",      "displayName": "SQL Server"},
-        {"code": 6, "typeName": "clickhouse", "dialect": "ClickHouse","protocol": "clickhouse", "displayName": "ClickHouse"},
+        {"code": 1,  "typeName": "mysql",      "dialect": "MySQL",       "protocol": "mysql",      "displayName": "MySQL"},
+        {"code": 2,  "typeName": "postgresql",  "dialect": "PostgreSQL",  "protocol": "postgresql", "displayName": "PostgreSQL"},
+        {"code": 3,  "typeName": "sqlite",      "dialect": "SQLite",      "protocol": "sqlite",     "displayName": "SQLite"},
+        {"code": 4,  "typeName": "h2",          "dialect": "H2",          "protocol": "h2",         "displayName": "H2"},
+        {"code": 5,  "typeName": "dameng",      "dialect": "Dameng",      "protocol": "dameng",     "displayName": "达梦"},
+        {"code": 6,  "typeName": "mssql",       "dialect": "SQL Server",  "protocol": "mssql",      "displayName": "SQL Server"},
+        {"code": 7,  "typeName": "oracle",      "dialect": "Oracle",      "protocol": "oracle",     "displayName": "Oracle"},
+        {"code": 8,  "typeName": "hive",         "dialect": "Hive",        "protocol": "hive",       "displayName": "Hive"},
+        {"code": 9,  "typeName": "clickhouse",  "dialect": "ClickHouse",  "protocol": "clickhouse", "displayName": "ClickHouse"},
     ]}
 
 

@@ -9,6 +9,7 @@ from ...core.text_utils import clean_code_block
 from ...services.schema_service import SchemaService
 from ...services.agent_datasource_service import AgentDatasourceService
 from ...core.database import async_session_maker
+from ...core.datasource_handler import get_handler
 import logging
 import json
 
@@ -145,18 +146,22 @@ async def table_relation_node(state: WorkflowState) -> Dict[str, Any]:
             all_relations = enhanced.get("relations", explicit_fks + implicit_rels)
             enhanced_tables = enhanced.get("tables", tables)
 
+            # 获取方言类型 (通过 Handler 策略模式)
+            handler = get_handler(datasource.type)
+            dialect = handler.dialect_type() if handler else datasource.type
+
             # 构建输出 SchemaDTO
             schema_dto = {
                 "tables": enhanced_tables,
                 "relations": all_relations,
-                "dialect": datasource.type,
+                "dialect": dialect,
                 "database": datasource.database,
             }
 
             return {
                 "schema": schema_text,
                 "schema_info": schema_dto,
-                "db_dialect_type": datasource.type,
+                "db_dialect_type": dialect,
                 "table_relation_exception": None,
             }
 

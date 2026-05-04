@@ -15,7 +15,7 @@
 
   被依赖:
     - models/datasource.py:Datasource  → ORM Model (MySQL datasource 表)
-    - aiomysql / aiosqlite             → 异步数据库驱动 (连接测试)
+    - core/datasource_handler.py → 策略模式，多数据库连接测试
 
   下游 (谁使用 Datasource 数据):
     - services/schema_service.py       → 读取 Datasource 连接信息，获取表结构
@@ -37,8 +37,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models.datasource import Datasource
 from ..schemas.datasource import DatasourceCreate, DatasourceUpdate
 from ..core.base_service import BaseService
-import aiomysql
-import aiosqlite
 
 
 class DatasourceService(BaseService[Datasource]):
@@ -97,34 +95,32 @@ class DatasourceService(BaseService[Datasource]):
 
     @staticmethod
     async def test_connection(db: AsyncSession, datasource_id: int) -> tuple[bool, str]:
+        """测试数据源连接 — 对齐 Java testConnection()
+
+        使用 DatasourceTypeHandler 策略模式:
+          1. 根据 datasource.type 获取对应 Handler
+          2. Handler.ping() 执行连接测试
+          3. 更新 test_status 到数据库
+        """
+        from ..core.datasource_handler import get_handler
+
         datasource = await DatasourceService.get_datasource(db, datasource_id)
         if not datasource:
             return False, "Datasource not found"
 
-        try:
-            if datasource.type == "mysql":
-                conn = await aiomysql.connect(
-                    host=datasource.host, port=datasource.port or 3306,
-                    user=datasource.username, password=datasource.password,
-                    db=datasource.database, connect_timeout=5,
-                )
-                await conn.ensure_closed()
-                message = "MySQL connection successful"
-            elif datasource.type == "sqlite":
-                async with aiosqlite.connect(datasource.connection_url or datasource.database) as conn:
-                    await conn.execute("SELECT 1")
-                message = "SQLite connection successful"
-            elif datasource.type == "postgresql":
-                return False, "PostgreSQL support not implemented yet"
-            else:
-                return False, f"Unsupported database type: {datasource.type}"
+        handler = get_handler(datasource.type)
+        if not handler:
+            return False, f"Unsupported database type: {datasource.type}"
 
-            datasource.test_status = "success"
+        try:
+            success, message = await handler.ping(datasource)
+            datasource.test_status = "success" if success else "failed"
             await db.flush()
             await db.refresh(datasource)
-            return True, message
-
+            return success, message
         except Exception as e:
+            logger = __import__("logging").getLogger(__name__)
+            logger.error(f"Error testing connection for datasource {datasource_id}: {e}")
             datasource.test_status = "failed"
             await db.flush()
             await db.refresh(datasource)
