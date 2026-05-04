@@ -254,3 +254,83 @@ class AgentDatasourceService:
             db.add(adt)
 
         await db.flush()
+
+    @staticmethod
+    async def init_schema(db: AsyncSession, agent_id: int) -> bool:
+        """初始化 Schema 到向量存储 — 对齐 Java initializeSchemaForAgentWithDatasource()"""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # 获取当前激活的 AgentDatasource
+        result = await db.execute(
+            select(AgentDatasource).where(
+                and_(
+                    AgentDatasource.agent_id == agent_id,
+                    AgentDatasource.is_active == True,
+                )
+            )
+        )
+        agent_ds = result.scalar_one_or_none()
+        if not agent_ds:
+            raise ValueError("No active datasource found for this Agent")
+
+        # 获取选中的表
+        tables_result = await db.execute(
+            select(AgentDatasourceTables.table_name).where(
+                AgentDatasourceTables.agent_datasource_id == agent_ds.id
+            )
+        )
+        tables = [row[0] for row in tables_result.all()]
+        if not tables:
+            raise ValueError("No tables selected for this Agent's datasource")
+
+        # 获取 Datasource 连接信息
+        ds_result = await db.execute(
+            select(Datasource).where(Datasource.id == agent_ds.datasource_id)
+        )
+        datasource = ds_result.scalar_one_or_none()
+        if not datasource:
+            raise ValueError("Datasource not found")
+
+        try:
+            # 获取 Schema 信息
+            from ..services.schema_service import SchemaService
+            schema = await SchemaService.get_database_schema(datasource, tables)
+
+            # 写入向量存储
+            from ..core.vector_store import get_vector_store
+            vector_store = get_vector_store()
+            collection_name = f"agent_{agent_id}_schema"
+
+            for table_info in schema.get("tables", []):
+                table_name = table_info.get("name", "")
+                columns = table_info.get("columns", [])
+                comment = table_info.get("comment", "")
+
+                # 构建 Schema 文本
+                col_descs = []
+                for col in columns:
+                    col_name = col.get("name", "")
+                    col_type = col.get("type", "")
+                    col_comment = col.get("comment", "")
+                    col_descs.append(f"  {col_name} ({col_type})" + (f" -- {col_comment}" if col_comment else ""))
+
+                text = f"Table: {table_name}\n" + (f"Description: {comment}\n" if comment else "") + "\n".join(col_descs)
+
+                await vector_store.add_document(
+                    collection_name=collection_name,
+                    doc_id=f"schema_{agent_id}_{table_name}",
+                    text=text,
+                    metadata={
+                        "agent_id": agent_id,
+                        "datasource_id": agent_ds.datasource_id,
+                        "table_name": table_name,
+                        "column_count": len(columns),
+                    },
+                )
+
+            logger.info(f"Schema initialized for agent {agent_id}: {len(tables)} tables")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to initialize schema for agent {agent_id}: {e}")
+            raise

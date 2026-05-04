@@ -100,6 +100,26 @@ async def update_datasource_tables(
         raise HTTPException(status_code=404, detail=str(e))
 
 
+@router.post("/{agent_id}/datasources/init", summary="初始化Schema到向量存储")
+async def init_schema(
+    agent_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """初始化 Agent 的数据库 Schema 到向量存储 — 对齐 Java POST /{agentId}/datasources/init"""
+    try:
+        result = await AgentDatasourceService.init_schema(db, agent_id)
+        if result:
+            return {"success": True, "message": "Schema初始化成功", "data": None}
+        else:
+            raise HTTPException(status_code=500, detail="Schema初始化失败")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger = __import__("logging").getLogger(__name__)
+        logger.error(f"Failed to initialize schema for agent: {agent_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Schema初始化失败：{e}")
+
+
 @router.post("/{agent_id}/datasources/{datasource_id}", summary="绑定数据源到Agent")
 async def bind_datasource(
     agent_id: int,
