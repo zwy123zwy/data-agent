@@ -50,3 +50,5 @@ class AgentListResponse(BaseModel):
     """Agent 列表响应"""
     total: int
     items: list[AgentResponse]
+
+

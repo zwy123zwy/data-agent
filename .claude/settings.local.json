@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ':*)",
+      "Bash(python:*)",
+      "Bash(curl -s \"http://localhost:8100/api/prompt-config/list-by-type/report-generator?agentId=10\")",
+      "Bash(curl -s \"http://localhost:8100/api/prompt-config/types\")",
+      "Bash(kill %1)",
+      "Bash(curl -s \"http://localhost:8100/api/prompt-config/list\")",
+      "Bash(curl -s http://localhost:8100/api/prompt-config/types)",
+      "Bash(curl -s -X POST http://localhost:8100/api/prompt-config/save -H 'Content-Type: application/json' -d '{\"name\":\"Test Report Prompt\",\"promptType\":\"report-generator\",\"agentId\":10,\"optimizationPrompt\":\"You are a report expert.\",\"enabled\":true,\"priority\":1}')",
+      "Bash(taskkill //F //IM python.exe)",
+      "Bash(curl -s -X POST http://localhost:8100/api/prompt-config/save -H 'Content-Type: application/json' -d '{\"name\":\"Test Report\",\"promptType\":\"report-generator\",\"agentId\":10,\"optimizationPrompt\":\"You are a report expert.\",\"enabled\":true,\"priority\":1}')",
+      "Bash(curl:*)",
+      "Bash(netstat -ano)",
+      "Bash(tasklist:*)"
+    ]
+  }
+}

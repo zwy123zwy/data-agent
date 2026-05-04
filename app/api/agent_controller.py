@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 from ..core.database import get_db
-from ..schemas.agent import AgentCreate, AgentUpdate, AgentResponse, AgentListResponse
+from ..schemas.agent import AgentCreate, AgentUpdate, AgentResponse
 from ..services.agent_service import AgentService
 
 router = APIRouter(prefix="/api/agent", tags=["Agent管理"])
@@ -26,16 +26,6 @@ async def list_agents_frontend(
     return agents
 
 
-@router.get("", response_model=AgentListResponse, summary="列出所有Agent")
-async def list_agents(
-    status: Optional[str] = Query(None, description="状态过滤: draft/published/offline"),
-    skip: int = Query(0, ge=0, description="分页偏移"),
-    limit: int = Query(100, ge=1, le=1000, description="每页数量"),
-    db: AsyncSession = Depends(get_db),
-):
-    """列出所有 Agent，支持分页和状态过滤"""
-    agents, total = await AgentService.list_agents(db, status, skip, limit)
-    return AgentListResponse(total=total, items=agents)
 
 
 @router.get("/{agent_id}", response_model=AgentResponse, summary="获取Agent详情")

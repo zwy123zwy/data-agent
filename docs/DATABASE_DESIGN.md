@@ -1,437 +1,494 @@
-# 数据库设计文档
+# 数据库 E-R 设计文档
 
-## Phase 1 数据库表
-
-Phase 1 只需要 3 张核心表，后续 Phase 逐步添加。
+> 基于 Java DataAgent `schema.sql` 和全部 12 个 Entity 类逆向生成，覆盖 **14 张表** 及所有外键关系。
 
 ---
 
-## 1. agent 表
+## 完整 E-R 图
 
-**用途：** 存储智能体（Agent）的基本信息
-
-### 表结构
-
-| 字段名 | 类型 | 约束 | 说明 |
-|--------|------|------|------|
-| id | INT | PRIMARY KEY, AUTO_INCREMENT | 主键 |
-| name | VARCHAR(100) | NOT NULL | Agent 名称 |
-| description | TEXT | NULL | Agent 描述 |
-| status | VARCHAR(20) | NOT NULL, DEFAULT 'draft' | 状态：draft/published/offline |
-| created_at | DATETIME | NOT NULL, DEFAULT CURRENT_TIMESTAMP | 创建时间 |
-| updated_at | DATETIME | NOT NULL, DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP | 更新时间 |
-
-### 索引
-
-```sql
-CREATE INDEX idx_agent_status ON agent(status);
-CREATE INDEX idx_agent_created_at ON agent(created_at);
 ```
-
-### SQLAlchemy 模型
-
-```python
-from datetime import datetime
-from typing import List, Optional
-from sqlalchemy import String, Text
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from app.models.base import Base
-
-class Agent(Base):
-    __tablename__ = "agent"
-    
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(100))
-    description: Mapped[Optional[str]] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String(20), default="draft")
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        default=datetime.utcnow, 
-        onupdate=datetime.utcnow
-    )
-    
-    # 关系
-    datasources: Mapped[List["AgentDatasource"]] = relationship(
-        back_populates="agent",
-        cascade="all, delete-orphan"
-    )
-```
-
-### 示例数据
-
-```sql
-INSERT INTO agent (name, description, status) VALUES
-('销售分析助手', '分析销售数据，生成销售报告', 'published'),
-('用户行为分析', '分析用户行为数据', 'draft');
-```
-
----
-
-## 2. datasource 表
-
-**用途：** 存储数据源连接信息
-
-### 表结构
-
-| 字段名 | 类型 | 约束 | 说明 |
-|--------|------|------|------|
-| id | INT | PRIMARY KEY, AUTO_INCREMENT | 主键 |
-| name | VARCHAR(100) | NOT NULL | 数据源名称 |
-| type | VARCHAR(20) | NOT NULL | 数据库类型：mysql/postgresql/sqlite |
-| host | VARCHAR(255) | NULL | 主机地址（SQLite 不需要） |
-| port | INT | NULL | 端口号 |
-| database | VARCHAR(100) | NOT NULL | 数据库名 |
-| username | VARCHAR(100) | NULL | 用户名 |
-| password | VARCHAR(255) | NULL | 密码（加密存储） |
-| connection_url | VARCHAR(500) | NULL | 完整连接字符串（SQLite 使用） |
-| test_status | VARCHAR(20) | NOT NULL, DEFAULT 'untested' | 测试状态：untested/success/failed |
-| created_at | DATETIME | NOT NULL, DEFAULT CURRENT_TIMESTAMP | 创建时间 |
-| updated_at | DATETIME | NOT NULL, DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP | 更新时间 |
-
-### 索引
-
-```sql
-CREATE INDEX idx_datasource_type ON datasource(type);
-CREATE INDEX idx_datasource_test_status ON datasource(test_status);
-```
-
-### SQLAlchemy 模型
-
-```python
-from datetime import datetime
-from typing import List, Optional
-from sqlalchemy import String, Integer
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from app.models.base import Base
-
-class Datasource(Base):
-    __tablename__ = "datasource"
-    
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(100))
-    type: Mapped[str] = mapped_column(String(20))
-    host: Mapped[Optional[str]] = mapped_column(String(255))
-    port: Mapped[Optional[int]] = mapped_column(Integer)
-    database: Mapped[str] = mapped_column(String(100))
-    username: Mapped[Optional[str]] = mapped_column(String(100))
-    password: Mapped[Optional[str]] = mapped_column(String(255))
-    connection_url: Mapped[Optional[str]] = mapped_column(String(500))
-    test_status: Mapped[str] = mapped_column(String(20), default="untested")
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow
-    )
-    
-    # 关系
-    agent_datasources: Mapped[List["AgentDatasource"]] = relationship(
-        back_populates="datasource",
-        cascade="all, delete-orphan"
-    )
-```
-
-### 示例数据
-
-```sql
--- MySQL 数据源
-INSERT INTO datasource (name, type, host, port, database, username, password, test_status) VALUES
-('生产数据库', 'mysql', 'localhost', 3306, 'sales_db', 'root', 'password', 'success');
-
--- SQLite 数据源
-INSERT INTO datasource (name, type, database, connection_url, test_status) VALUES
-('本地测试库', 'sqlite', 'test.db', 'sqlite:///./test.db', 'success');
+┌──────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                      │
+│   ★ 图例:  ──<  = 1:N (一对多)    >── = N:1 (多对一)    ═══  = 双线核心实体          │
+│                                                                                      │
+│   ┌──────────────────────────────────────────────────────────────────────────────┐   │
+│   │                         独立表 (无外键依赖)                                    │   │
+│   │                                                                              │   │
+│   │  ┌──────────────────────┐          ┌──────────────────────────────────┐      │   │
+│   │  │    model_config      │          │       human_feedback             │      │   │
+│   │  │  (LLM/Embedding 模型) │          │  (人工反馈, Python 扩展)          │      │   │
+│   │  │  id | provider       │          │  id | thread_id | feedback_type  │      │   │
+│   │  │  base_url | api_key  │          │  content | status | agent_id     │      │   │
+│   │  │  model_name | type   │          └──────────────────────────────────┘      │   │
+│   │  └──────────────────────┘                                                    │   │
+│   └──────────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                      │
+│   ┌──────────────────────────────────────────────────────────────────────────────┐   │
+│   │                    以 agent 为核心的第一层子表 (N:1 → agent)                    │   │
+│   │                                                                              │   │
+│   │  ┌──────────────────────┐  ┌──────────────────────┐  ┌────────────────────┐ │   │
+│   │  │  business_knowledge  │  │   agent_knowledge    │  │  semantic_model    │ │   │
+│   │  │  业务名词/同义词/RAG  │  │  知识文档/QA/FAQ     │  │  字段别名/业务语义  │ │   │
+│   │  │  agent_id → agent    │  │  agent_id → agent    │  │  agent_id → agent  │ │   │
+│   │  └──────────────────────┘  └──────────────────────┘  │  ds_id → datasource│ │   │
+│   │                                                       └────────────────────┘ │   │
+│   │  ┌──────────────────────┐  ┌──────────────────────┐  ┌────────────────────┐ │   │
+│   │  │ agent_preset_question│  │    chat_session      │  │ user_prompt_config │ │   │
+│   │  │  预设问题             │  │  对话会话             │  │  自定义 Prompt      │ │   │
+│   │  │  agent_id → agent    │  │  agent_id → agent    │  │  agent_id → agent  │ │   │
+│   │  └──────────────────────┘  └──────────┬───────────┘  │    (nullable)      │ │   │
+│   │                                       │               └────────────────────┘ │   │
+│   └───────────────────────────────────────┼───────────────────────────────────────┘   │
+│                                           │                                           │
+│                                           │ 1:N (session_id)                          │
+│                                           ▼                                           │
+│                               ┌──────────────────────┐                                │
+│                               │    chat_message      │                                │
+│                               │  消息 (user/assistant)│                                │
+│                               │  session_id → session │                                │
+│                               │  role | content | type│                                │
+│                               └──────────────────────┘                                │
+│                                                                                      │
+│   ┌──────────────────────────────────────────────────────────────────────────────┐   │
+│   │                         双核心 + 桥接层                                       │   │
+│   │                                                                              │   │
+│   │                         ┌──────────────────────────┐                          │   │
+│   │                         │ agent_datasource_tables  │                          │   │
+│   │                         │ 该关联下选中的数据表       │                          │   │
+│   │                         │ agent_ds_id → agent_ds   │                          │   │
+│   │                         └───────────┬──────────────┘                          │   │
+│   │                                     │ N:1                                    │   │
+│   │                                     │ agent_datasource_id                    │   │
+│   ╞═════════════════════════════════════╪════════════════════════════════════════╡   │
+│   │                                     ▼                                        │   │
+│   │  ╔══════════════════╗    ┌──────────────────────────┐    ╔══════════════════╗│   │
+│   │  ║     agent        ║    │   agent_datasource      │    ║   datasource     ║│   │
+│   │  ║  (智能体)         ║◄───│  (M:N 桥接关联表)        │───►║  (数据源)         ║│   │
+│   │  ║  id | name       ║1:N │  id | agent_id (FK)    │N:1 ║  id | name       ║│   │
+│   │  ║  status | api_key║    │  datasource_id (FK)    │    ║  type | host      ║│   │
+│   │  ║  prompt | tags   ║    │  is_active             │    ║  db | user/pass   ║│   │
+│   │  ╚══════╤═══════════╝    └──────────────────────────┘    ╚══════╤═══════════╝│   │
+│   │         │                                                        │          │   │
+│   └─────────┼────────────────────────────────────────────────────────┼──────────┘   │
+│             │                                                        │              │
+│             │ 1:N (agent_id)                              1:N (datasource_id)        │
+│             │  ┌─────────────────────────────────────┐     │              │
+│             ├─►│ business_knowledge / agent_knowledge│     │              │
+│             │  │ semantic_model / preset_question    │     │              │
+│             │  │ chat_session / user_prompt_config   │     │              │
+│             │  └─────────────────────────────────────┘     │              │
+│             │                                               ▼              │
+│             │                                  ┌──────────────────────┐   │
+│             │                                  │  logical_relation    │   │
+│             │                                  │  逻辑外键配置         │   │
+│             │                                  │  datasource_id → ds  │   │
+│             │                                  │  source_table.column  │   │
+│             │                                  │  → target_table.column│   │
+│             │                                  └──────────────────────┘   │
+│             │                                                                         │
+│             │  semantic_model 同时关联 agent_id 和 datasource_id:                     │
+│             │  ┌─────────────────────────────────────────────────────┐                │
+│             │  │        semantic_model                               │                │
+│             │  │  agent_id ──► agent      (通过哪个 Agent 配置)       │                │
+│             │  │  datasource_id ──► datasource (来自哪个数据源)       │                │
+│             │  │  table_name + column_name → business_name + synonyms│                │
+│             │  └─────────────────────────────────────────────────────┘                │
+│             │                                                                         │
+└──────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 3. agent_datasource 表
+## 全部 14 张表及外键关系
 
-**用途：** Agent 和 Datasource 的多对多关联表
+### 一、核心实体 (2 张)
 
-### 表结构
+| # | 表名 | 用途 | 主键 |
+|---|------|------|------|
+| 1 | **agent** | 智能体，整个系统的根实体 | `id` INT AUTO_INCREMENT |
+| 2 | **datasource** | 数据源连接信息 (MySQL/PostgreSQL) | `id` INT AUTO_INCREMENT |
 
-| 字段名 | 类型 | 约束 | 说明 |
-|--------|------|------|------|
-| id | INT | PRIMARY KEY, AUTO_INCREMENT | 主键 |
-| agent_id | INT | NOT NULL, FOREIGN KEY | Agent ID |
-| datasource_id | INT | NOT NULL, FOREIGN KEY | Datasource ID |
-| is_active | BOOLEAN | NOT NULL, DEFAULT TRUE | 是否为当前激活的数据源 |
-| created_at | DATETIME | NOT NULL, DEFAULT CURRENT_TIMESTAMP | 创建时间 |
+### 二、桥接关联 (2 张)
 
-### 约束
+| # | 表名 | 用途 | 外键 |
+|---|------|------|------|
+| 3 | **agent_datasource** | Agent ↔ Datasource 的 M:N 关联，带 `is_active` 激活标记 | `agent_id` → agent, `datasource_id` → datasource |
+| 4 | **agent_datasource_tables** | 某个 Agent-DataSource 关联下用户勾选的具体表名 | `agent_datasource_id` → agent_datasource |
 
-```sql
-ALTER TABLE agent_datasource 
-ADD CONSTRAINT fk_agent_datasource_agent 
-FOREIGN KEY (agent_id) REFERENCES agent(id) ON DELETE CASCADE;
-
-ALTER TABLE agent_datasource 
-ADD CONSTRAINT fk_agent_datasource_datasource 
-FOREIGN KEY (datasource_id) REFERENCES datasource(id) ON DELETE CASCADE;
-
--- 唯一约束：一个 Agent 不能重复绑定同一个 Datasource
-ALTER TABLE agent_datasource 
-ADD CONSTRAINT uk_agent_datasource 
-UNIQUE (agent_id, datasource_id);
+```
+agent ──< agent_datasource >── datasource
+                  │
+                  └──< agent_datasource_tables
 ```
 
-### 索引
+### 三、第一层子表：挂载在 agent 下 (6 张)
 
-```sql
-CREATE INDEX idx_agent_datasource_agent ON agent_datasource(agent_id);
-CREATE INDEX idx_agent_datasource_datasource ON agent_datasource(datasource_id);
-CREATE INDEX idx_agent_datasource_active ON agent_datasource(is_active);
+| # | 表名 | 用途 | 外键 |
+|---|------|------|------|
+| 5 | **business_knowledge** | 业务名词/同义词/描述，RAG 向量检索的基础语料 | `agent_id` → agent |
+| 6 | **agent_knowledge** | 知识源管理 (文档/QA/FAQ)，支持文件上传+向量化 | `agent_id` → agent |
+| 7 | **semantic_model** | 数据库字段到业务语义的映射 (字段别名) | `agent_id` → agent, `datasource_id` → datasource |
+| 8 | **agent_preset_question** | Agent 预设问题，展示在前端对话框的快捷提问 | `agent_id` → agent |
+| 9 | **chat_session** | 聊天会话，记录每次对话的标题和状态 | `agent_id` → agent |
+| 10 | **user_prompt_config** | 用户自定义 Prompt 配置，按 Agent+类型多维度生效 | `agent_id` → agent (nullable) |
+
+```
+agent ──< business_knowledge
+agent ──< agent_knowledge
+agent ──< semantic_model ──> datasource
+agent ──< agent_preset_question
+agent ──< chat_session
+agent ──< user_prompt_config   (agent_id 可为 NULL，表示全局配置)
 ```
 
-### SQLAlchemy 模型
+### 四、第二层子表 (1 张)
 
-```python
-from datetime import datetime
-from sqlalchemy import ForeignKey, Boolean
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from app.models.base import Base
+| # | 表名 | 用途 | 外键 |
+|---|------|------|------|
+| 11 | **chat_message** | 聊天消息，记录 user/assistant/system 的每一条消息 | `session_id` → chat_session |
 
-class AgentDatasource(Base):
-    __tablename__ = "agent_datasource"
-    
-    id: Mapped[int] = mapped_column(primary_key=True)
-    agent_id: Mapped[int] = mapped_column(ForeignKey("agent.id"))
-    datasource_id: Mapped[int] = mapped_column(ForeignKey("datasource.id"))
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    
-    # 关系
-    agent: Mapped["Agent"] = relationship(back_populates="datasources")
-    datasource: Mapped["Datasource"] = relationship(back_populates="agent_datasources")
+```
+chat_session ──< chat_message
 ```
 
-### 示例数据
+### 五、挂载在 datasource 下 (1 张)
 
-```sql
--- Agent 1 绑定 Datasource 1，并设为激活
-INSERT INTO agent_datasource (agent_id, datasource_id, is_active) VALUES
-(1, 1, TRUE);
+| # | 表名 | 用途 | 外键 |
+|---|------|------|------|
+| 12 | **logical_relation** | 逻辑外键配置，定义数据源中表之间的隐式关联 | `datasource_id` → datasource |
 
--- Agent 2 绑定 Datasource 2
-INSERT INTO agent_datasource (agent_id, datasource_id, is_active) VALUES
-(2, 2, TRUE);
+```
+datasource ──< logical_relation
+```
+
+### 六、独立表 (2 张)
+
+| # | 表名 | 用途 | 说明 |
+|---|------|------|------|
+| 13 | **model_config** | LLM/Embedding 模型配置 (provider/base_url/api_key) | 全局配置，不关联任何实体 |
+| 14 | **human_feedback** | 人工反馈记录 (Python 扩展) | `agent_id` → agent (可选) |
+
+---
+
+## 外键依赖链 (从根到叶)
+
+```
+agent (根)
+  ├── agent_datasource ──> datasource
+  │       └── agent_datasource_tables
+  ├── business_knowledge
+  ├── agent_knowledge
+  ├── semantic_model ──> datasource
+  ├── agent_preset_question
+  ├── chat_session
+  │       └── chat_message
+  └── user_prompt_config (nullable FK)
+
+datasource (根)
+  ├── agent_datasource ──> agent
+  │       └── agent_datasource_tables
+  ├── semantic_model ──> agent
+  └── logical_relation
+
+model_config (独立)
+human_feedback (独立, Python 扩展)
 ```
 
 ---
 
-## 完整建表 SQL
+## 各表 DDL 摘要
 
-### MySQL 版本
-
+### agent
 ```sql
--- 创建数据库
-CREATE DATABASE IF NOT EXISTS dataagent 
-CHARACTER SET utf8mb4 
-COLLATE utf8mb4_unicode_ci;
-
-USE dataagent;
-
--- 1. agent 表
 CREATE TABLE agent (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
+    id INT NOT NULL AUTO_INCREMENT,
+    name VARCHAR(255) NOT NULL,
     description TEXT,
-    status VARCHAR(20) NOT NULL DEFAULT 'draft',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_agent_status (status),
-    INDEX idx_agent_created_at (created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    avatar TEXT,
+    status VARCHAR(50) DEFAULT 'draft',          -- draft | published | offline
+    api_key VARCHAR(255) DEFAULT NULL,            -- sk-xxx
+    api_key_enabled TINYINT DEFAULT 0,
+    prompt TEXT,                                   -- 自定义 Prompt
+    category VARCHAR(100),
+    admin_id BIGINT,
+    tags TEXT,                                     -- 逗号分隔
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id)
+) ENGINE=InnoDB;
+```
 
--- 2. datasource 表
+### datasource
+```sql
 CREATE TABLE datasource (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    type VARCHAR(20) NOT NULL,
-    host VARCHAR(255),
-    port INT,
-    database VARCHAR(100) NOT NULL,
-    username VARCHAR(100),
-    password VARCHAR(255),
-    connection_url VARCHAR(500),
-    test_status VARCHAR(20) NOT NULL DEFAULT 'untested',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_datasource_type (type),
-    INDEX idx_datasource_test_status (test_status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    id INT NOT NULL AUTO_INCREMENT,
+    name VARCHAR(255) NOT NULL,
+    type VARCHAR(50) NOT NULL,                     -- mysql | postgresql
+    host VARCHAR(255) NOT NULL,
+    port INT NOT NULL,
+    database_name VARCHAR(255) NOT NULL,
+    username VARCHAR(255) NOT NULL,
+    password VARCHAR(255) NOT NULL,                -- 加密存储
+    connection_url VARCHAR(1000),
+    status VARCHAR(50) DEFAULT 'inactive',
+    test_status VARCHAR(50) DEFAULT 'unknown',     -- success | failed | unknown
+    description TEXT,
+    creator_id BIGINT,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id)
+) ENGINE=InnoDB;
+```
 
--- 3. agent_datasource 表
+### agent_datasource (M:N 桥接)
+```sql
 CREATE TABLE agent_datasource (
-    id INT AUTO_INCREMENT PRIMARY KEY,
+    id INT NOT NULL AUTO_INCREMENT,
     agent_id INT NOT NULL,
     datasource_id INT NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_agent_datasource_agent 
-        FOREIGN KEY (agent_id) REFERENCES agent(id) ON DELETE CASCADE,
-    CONSTRAINT fk_agent_datasource_datasource 
-        FOREIGN KEY (datasource_id) REFERENCES datasource(id) ON DELETE CASCADE,
-    CONSTRAINT uk_agent_datasource UNIQUE (agent_id, datasource_id),
-    INDEX idx_agent_datasource_agent (agent_id),
-    INDEX idx_agent_datasource_datasource (datasource_id),
-    INDEX idx_agent_datasource_active (is_active)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-```
-
-### SQLite 版本
-
-```sql
--- 1. agent 表
-CREATE TABLE agent (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name VARCHAR(100) NOT NULL,
-    description TEXT,
-    status VARCHAR(20) NOT NULL DEFAULT 'draft',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_agent_status ON agent(status);
-CREATE INDEX idx_agent_created_at ON agent(created_at);
-
--- 2. datasource 表
-CREATE TABLE datasource (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name VARCHAR(100) NOT NULL,
-    type VARCHAR(20) NOT NULL,
-    host VARCHAR(255),
-    port INTEGER,
-    database VARCHAR(100) NOT NULL,
-    username VARCHAR(100),
-    password VARCHAR(255),
-    connection_url VARCHAR(500),
-    test_status VARCHAR(20) NOT NULL DEFAULT 'untested',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_datasource_type ON datasource(type);
-CREATE INDEX idx_datasource_test_status ON datasource(test_status);
-
--- 3. agent_datasource 表
-CREATE TABLE agent_datasource (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    agent_id INTEGER NOT NULL,
-    datasource_id INTEGER NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT 1,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    is_active TINYINT DEFAULT 0,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_agent_datasource (agent_id, datasource_id),
     FOREIGN KEY (agent_id) REFERENCES agent(id) ON DELETE CASCADE,
-    FOREIGN KEY (datasource_id) REFERENCES datasource(id) ON DELETE CASCADE,
-    UNIQUE (agent_id, datasource_id)
-);
+    FOREIGN KEY (datasource_id) REFERENCES datasource(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+```
 
-CREATE INDEX idx_agent_datasource_agent ON agent_datasource(agent_id);
-CREATE INDEX idx_agent_datasource_datasource ON agent_datasource(datasource_id);
-CREATE INDEX idx_agent_datasource_active ON agent_datasource(is_active);
+### agent_datasource_tables
+```sql
+CREATE TABLE agent_datasource_tables (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    agent_datasource_id INT NOT NULL,
+    table_name VARCHAR(255) NOT NULL,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (agent_datasource_id, table_name),
+    FOREIGN KEY (agent_datasource_id) REFERENCES agent_datasource(id)
+        ON UPDATE CASCADE ON DELETE CASCADE
+) ENGINE=InnoDB;
+```
+
+### business_knowledge
+```sql
+CREATE TABLE business_knowledge (
+    id INT NOT NULL AUTO_INCREMENT,
+    business_term VARCHAR(255) NOT NULL,           -- 业务名词
+    description TEXT,                               -- 描述
+    synonyms TEXT,                                  -- 同义词，逗号分隔
+    is_recall INT DEFAULT 1,                       -- 是否召回
+    agent_id INT NOT NULL,
+    created_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    embedding_status VARCHAR(20) DEFAULT NULL,     -- PENDING|PROCESSING|COMPLETED|FAILED
+    error_msg VARCHAR(255),
+    is_deleted INT DEFAULT 0,
+    PRIMARY KEY (id),
+    FOREIGN KEY (agent_id) REFERENCES agent(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+```
+
+### agent_knowledge
+```sql
+CREATE TABLE agent_knowledge (
+    id INT NOT NULL AUTO_INCREMENT,
+    agent_id INT NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    type VARCHAR(50) NOT NULL,                     -- DOCUMENT | QA | FAQ
+    question TEXT,
+    content MEDIUMTEXT,
+    is_recall INT DEFAULT 1,
+    embedding_status VARCHAR(20) DEFAULT NULL,
+    error_msg VARCHAR(255),
+    source_filename VARCHAR(500),
+    file_path VARCHAR(500),
+    file_size BIGINT,
+    file_type VARCHAR(255),
+    splitter_type VARCHAR(50) DEFAULT 'token',
+    created_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    is_deleted INT DEFAULT 0,
+    is_resource_cleaned INT DEFAULT 0,
+    PRIMARY KEY (id)
+) ENGINE=InnoDB;
+```
+
+### semantic_model
+```sql
+CREATE TABLE semantic_model (
+    id INT NOT NULL AUTO_INCREMENT,
+    agent_id INT NOT NULL,                         -- FK → agent
+    datasource_id INT NOT NULL,                    -- FK → datasource
+    table_name VARCHAR(255) NOT NULL,
+    column_name VARCHAR(255) NOT NULL DEFAULT '',  -- 物理字段名
+    business_name VARCHAR(255) NOT NULL DEFAULT '',-- 业务名/别名
+    synonyms TEXT,                                  -- 同义词
+    business_description TEXT,                      -- 给 LLM 的业务描述
+    column_comment VARCHAR(255),                    -- 物理注释
+    data_type VARCHAR(255) NOT NULL DEFAULT '',
+    status TINYINT NOT NULL DEFAULT 1,             -- 0 停用 1 启用
+    created_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    FOREIGN KEY (agent_id) REFERENCES agent(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+```
+
+### agent_preset_question
+```sql
+CREATE TABLE agent_preset_question (
+    id INT NOT NULL AUTO_INCREMENT,
+    agent_id INT NOT NULL,
+    question TEXT NOT NULL,
+    sort_order INT DEFAULT 0,
+    is_active TINYINT DEFAULT 0,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    FOREIGN KEY (agent_id) REFERENCES agent(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+```
+
+### chat_session
+```sql
+CREATE TABLE chat_session (
+    id VARCHAR(36) NOT NULL,                       -- UUID
+    agent_id INT NOT NULL,
+    title VARCHAR(255) DEFAULT '新对话',
+    status VARCHAR(50) DEFAULT 'active',           -- active | archived | deleted
+    is_pinned TINYINT DEFAULT 0,
+    user_id BIGINT,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    FOREIGN KEY (agent_id) REFERENCES agent(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+```
+
+### chat_message (→ chat_session)
+```sql
+CREATE TABLE chat_message (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    session_id VARCHAR(36) NOT NULL,               -- FK → chat_session
+    role VARCHAR(20) NOT NULL,                     -- user | assistant | system
+    content TEXT NOT NULL,
+    message_type VARCHAR(50) DEFAULT 'text',       -- text | sql | result | error
+    metadata JSON,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    FOREIGN KEY (session_id) REFERENCES chat_session(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+```
+
+### user_prompt_config (→ agent, nullable)
+```sql
+CREATE TABLE user_prompt_config (
+    id VARCHAR(36) NOT NULL,                       -- UUID
+    name VARCHAR(255) NOT NULL,
+    prompt_type VARCHAR(100) NOT NULL,             -- report-generator|planner|sql-generator|python-generator|rewrite
+    agent_id INT,                                  -- NULL = 全局配置
+    system_prompt TEXT NOT NULL,
+    enabled TINYINT DEFAULT 1,
+    description TEXT,
+    priority INT DEFAULT 0,                        -- 越大越优先
+    display_order INT DEFAULT 0,                   -- 越小越靠前
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    creator VARCHAR(255),
+    PRIMARY KEY (id),
+    INDEX idx_prompt_type_enabled_priority (prompt_type, agent_id, enabled, priority DESC)
+) ENGINE=InnoDB;
+```
+
+### logical_relation (→ datasource)
+```sql
+CREATE TABLE logical_relation (
+    id INT NOT NULL AUTO_INCREMENT,
+    datasource_id INT NOT NULL,
+    source_table_name VARCHAR(100) NOT NULL,       -- 主表
+    source_column_name VARCHAR(100) NOT NULL,      -- 主表字段
+    target_table_name VARCHAR(100) NOT NULL,       -- 关联表
+    target_column_name VARCHAR(100) NOT NULL,      -- 关联表字段
+    relation_type VARCHAR(20) DEFAULT NULL,        -- 1:1 | 1:N | N:1
+    description VARCHAR(500),                       -- 给 LLM 的业务描述
+    is_deleted TINYINT DEFAULT 0,
+    created_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    FOREIGN KEY (datasource_id) REFERENCES datasource(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+```
+
+### model_config (独立)
+```sql
+CREATE TABLE model_config (
+    id INT NOT NULL AUTO_INCREMENT,
+    provider VARCHAR(255) NOT NULL,
+    base_url VARCHAR(255) NOT NULL,
+    api_key VARCHAR(255) NOT NULL,
+    model_name VARCHAR(255) NOT NULL,
+    temperature DECIMAL(10,2) DEFAULT 0.00,
+    is_active TINYINT DEFAULT 0,
+    max_tokens INT DEFAULT 2000,
+    model_type VARCHAR(20) NOT NULL DEFAULT 'CHAT',  -- CHAT | EMBEDDING
+    completions_path VARCHAR(255),
+    embeddings_path VARCHAR(255),
+    created_time DATETIME DEFAULT NULL,
+    updated_time DATETIME DEFAULT NULL,
+    is_deleted INT DEFAULT 0,
+    proxy_enabled TINYINT DEFAULT 0,
+    proxy_host VARCHAR(255),
+    proxy_port INT,
+    proxy_username VARCHAR(255),
+    proxy_password VARCHAR(255),
+    PRIMARY KEY (id)
+) ENGINE=InnoDB;
 ```
 
 ---
 
-## 后续 Phase 扩展表
+## 级联删除链
 
-### Phase 2 新增表
+```
+删除 agent
+  └── CASCADE → agent_datasource
+  │     └── CASCADE → agent_datasource_tables
+  ├── CASCADE → business_knowledge
+  ├── CASCADE → agent_knowledge
+  ├── CASCADE → semantic_model
+  ├── CASCADE → agent_preset_question
+  ├── CASCADE → chat_session
+  │     └── CASCADE → chat_message
+  └── (user_prompt_config: agent_id 设为 NULL 或手动处理)
 
-1. **business_knowledge** - 业务知识库
-2. **semantic_model** - 语义模型
-3. **agent_knowledge** - Agent 知识源
+删除 datasource
+  ├── CASCADE → agent_datasource
+  │     └── CASCADE → agent_datasource_tables
+  └── CASCADE → logical_relation
 
-### Phase 3 新增表
-
-4. **chat_session** - 聊天会话
-5. **chat_message** - 聊天消息
-
-### Phase 4 新增表
-
-6. **user_prompt_config** - Prompt 配置
-7. **model_config** - 模型配置
-
-### Phase 5 新增表
-
-8. **logical_relation** - 表关系
-9. **agent_datasource_tables** - Agent 选择的表
-10. **agent_preset_question** - 预设问题
-
----
-
-## 数据库迁移策略
-
-使用 Alembic 进行数据库版本管理：
-
-```bash
-# 初始化 Alembic
-alembic init alembic
-
-# 创建迁移
-alembic revision --autogenerate -m "phase1: create agent, datasource, agent_datasource tables"
-
-# 执行迁移
-alembic upgrade head
-
-# 回滚
-alembic downgrade -1
+删除 chat_session
+  └── CASCADE → chat_message
 ```
 
 ---
 
-## 与 Java 版本对齐
+## 与 Python 版对照
 
-| Java 表名 | Python 表名 | Phase | 说明 |
-|-----------|-------------|-------|------|
-| agent | agent | 1 | ✅ 完全一致 |
-| datasource | datasource | 1 | ✅ 完全一致 |
-| agent_datasource | agent_datasource | 1 | ✅ 完全一致 |
-| business_knowledge | business_knowledge | 2 | 待实现 |
-| semantic_model | semantic_model | 2 | 待实现 |
-| agent_knowledge | agent_knowledge | 2 | 待实现 |
-| chat_session | chat_session | 3 | 待实现 |
-| chat_message | chat_message | 3 | 待实现 |
-| user_prompt_config | user_prompt_config | 4 | 待实现 |
-| model_config | model_config | 4 | 待实现 |
-| logical_relation | logical_relation | 5 | 待实现 |
-| agent_datasource_tables | agent_datasource_tables | 5 | 待实现 |
-| agent_preset_question | agent_preset_question | 5 | 待实现 |
-
----
-
-## 数据库连接配置
-
-### 异步连接池
-
-```python
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
-
-# 创建异步引擎
-engine = create_async_engine(
-    settings.database_url,
-    echo=settings.debug,
-    pool_size=10,
-    max_overflow=20,
-    pool_pre_ping=True,
-    pool_recycle=3600
-)
-
-# 创建异步 Session 工厂
-async_session_maker = sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False
-)
-
-# 依赖注入
-async def get_db() -> AsyncSession:
-    async with async_session_maker() as session:
-        yield session
-```
-
----
-
-## 测试数据
-
-参见 `scripts/seed_data.py` 生成测试数据。
+| Java 表名 | Python 表名 | 状态 |
+|-----------|------------|------|
+| agent | agent | 已实现 |
+| datasource | datasource | 已实现 |
+| agent_datasource | agent_datasource | 已实现 |
+| agent_datasource_tables | agent_datasource_tables | 已实现 |
+| business_knowledge | knowledge | 已实现 (合并了部分 agent_knowledge 字段) |
+| agent_knowledge | — | Python 版合并到 knowledge 表 |
+| semantic_model | semantic_model | 已实现 |
+| agent_preset_question | agent_preset_question | 已实现 |
+| chat_session | chat_session | 已实现 |
+| chat_message | chat_message | 已实现 |
+| user_prompt_config | prompt_config | 已实现 |
+| model_config | model_config | 已实现 |
+| logical_relation | logical_relation | 已实现 |
+| — | human_feedback | Python 扩展 |
+| — | query_plan | Python 扩展 |

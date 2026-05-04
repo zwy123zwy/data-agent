@@ -28,6 +28,7 @@ class Agent(Base):
     prompt: Mapped[Optional[str]] = mapped_column(Text, comment="Agent自定义Prompt")
     category: Mapped[Optional[str]] = mapped_column(String(100), comment="分类")
     admin_id: Mapped[Optional[int]] = mapped_column(Integer, comment="管理员ID")
+    human_review_enabled: Mapped[bool] = mapped_column(default=False, comment="是否启用人工审核")
 
     # 时间戳
     created_at: Mapped[datetime] = mapped_column(

@@ -1,5 +1,5 @@
 # ============================================================================
-# 从 0 理解本项目：app/main.py 是整个 Python 后端的启动入口
+# 从 0 理解本项目：app/main.py 定义 FastAPI 应用，启动入口为项目根目录的 main.py
 # ============================================================================
 #
 # 【项目架构概览 — 请求在系统中的流转路径】
@@ -36,15 +36,6 @@
 #
 # ============================================================================
 
-# 当直接运行且没有包信息时，设置包信息
-if __name__ == "__main__" and __package__ is None:
-    import sys
-    import os
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    parent_dir = os.path.dirname(current_dir)
-    sys.path.insert(0, parent_dir)
-    __package__ = "app"
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -66,6 +57,7 @@ from .api import (
     feedback_controller,                 # 人工反馈
     chat_controller,                     # 会话历史 (ChatSession/ChatMessage)
     agent_preset_question_controller,    # Agent 预设问题
+    prompt_config_controller,            # Prompt 自定义配置
 )
 
 
@@ -137,6 +129,7 @@ app.include_router(model_config_controller.router)
 app.include_router(feedback_controller.router)
 app.include_router(chat_controller.router)
 app.include_router(agent_preset_question_controller.router)
+app.include_router(prompt_config_controller.router)
 
 
 @app.get("/", tags=["健康检查"])
@@ -153,13 +146,3 @@ async def root():
 async def health():
     """健康检查接口"""
     return {"status": "healthy"}
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(
-        "app.main:app",
-        host=settings.host,
-        port=settings.port,    # 默认 8100
-        reload=False           # 禁用热重载 (Windows 兼容性问题)
-    )
