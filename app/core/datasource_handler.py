@@ -26,10 +26,6 @@ from abc import ABC, abstractmethod
 from typing import Dict, List, Any, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
-import asyncio
-import logging
-
-logger = logging.getLogger(__name__)
 
 
 class DatasourceTypeHandler(ABC):
@@ -116,7 +112,7 @@ class DatasourceTypeHandler(ABC):
         url = self.normalize_test_url(datasource, url)
 
         try:
-            engine = create_async_engine(url, echo=False, connect_args={"timeout": 5})
+            engine = create_async_engine(url, echo=False)
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
             await engine.dispose()
@@ -265,7 +261,7 @@ class PostgresqlTypeHandler(DatasourceTypeHandler):
         url = self.resolve_connection_url(datasource)
         url = self.normalize_test_url(datasource, url)
         try:
-            engine = create_async_engine(url, echo=False, connect_args={"timeout": 5})
+            engine = create_async_engine(url, echo=False)
             async with engine.connect() as conn:
                 # 检查 schema 是否存在
                 schema = self.extract_schema_name(datasource)
@@ -400,7 +396,7 @@ class OracleTypeHandler(DatasourceTypeHandler):
     async def ping(self, datasource) -> tuple[bool, str]:
         url = self.resolve_connection_url(datasource)
         try:
-            engine = create_async_engine(url, echo=False, connect_args={"timeout": 5})
+            engine = create_async_engine(url, echo=False)
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1 FROM DUAL"))
             await engine.dispose()
@@ -479,7 +475,7 @@ class SqlServerTypeHandler(DatasourceTypeHandler):
     async def ping(self, datasource) -> tuple[bool, str]:
         url = self.resolve_connection_url(datasource)
         try:
-            engine = create_async_engine(url, echo=False, connect_args={"timeout": 5})
+            engine = create_async_engine(url, echo=False)
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
             await engine.dispose()
@@ -561,7 +557,7 @@ class ClickHouseTypeHandler(DatasourceTypeHandler):
     async def ping(self, datasource) -> tuple[bool, str]:
         url = self.resolve_connection_url(datasource)
         try:
-            engine = create_async_engine(url, echo=False, connect_args={"timeout": 5})
+            engine = create_async_engine(url, echo=False)
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
             await engine.dispose()
@@ -628,7 +624,7 @@ class DamengTypeHandler(DatasourceTypeHandler):
     async def ping(self, datasource) -> tuple[bool, str]:
         url = self.resolve_connection_url(datasource)
         try:
-            engine = create_async_engine(url, echo=False, connect_args={"timeout": 5})
+            engine = create_async_engine(url, echo=False)
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1 FROM DUAL"))
             await engine.dispose()
@@ -706,7 +702,7 @@ class HiveTypeHandler(DatasourceTypeHandler):
     async def ping(self, datasource) -> tuple[bool, str]:
         url = self.resolve_connection_url(datasource)
         try:
-            engine = create_async_engine(url, echo=False, connect_args={"timeout": 10})
+            engine = create_async_engine(url, echo=False)
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
             await engine.dispose()
