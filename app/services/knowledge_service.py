@@ -38,7 +38,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
 from typing import List, Optional, Dict, Any
 from ..models.knowledge import Knowledge
-from ..schemas.knowledge import KnowledgeCreate, KnowledgeUpdate, KnowledgeSearchRequest, KnowledgeSearchResult
+from ..schemas.knowledge import (
+    KnowledgeCreate, KnowledgeUpdate, KnowledgeSearchRequest, KnowledgeSearchResult,
+    AgentKnowledgeQueryDTO,
+)
 from ..core.vector_store import get_vector_store
 import logging
 
@@ -294,3 +297,102 @@ class KnowledgeService:
         except Exception as e:
             logger.error(f"Failed to search knowledge: {e}")
             raise
+
+    # ================================================================
+    # Java-aligned methods (AgentKnowledgeController)
+    # ================================================================
+
+    @staticmethod
+    async def update_recall_status(
+        db: AsyncSession, knowledge_id: int, is_recall: bool
+    ) -> Optional[Knowledge]:
+        """切换召回状态 — 对齐 Java updateRecallStatus()"""
+        knowledge = await KnowledgeService.get_knowledge(db, knowledge_id)
+        if not knowledge:
+            return None
+        knowledge.is_recall = 1 if is_recall else 0
+        await db.commit()
+        await db.refresh(knowledge)
+        logger.info(f"Updated recall status for knowledge {knowledge_id}: is_recall={is_recall}")
+        return knowledge
+
+    @staticmethod
+    async def query_page(
+        db: AsyncSession, dto: AgentKnowledgeQueryDTO
+    ) -> tuple[list[Knowledge], int]:
+        """分页查询 — 对齐 Java queryByConditionsWithPage()"""
+        from sqlalchemy import and_
+
+        conditions = [Knowledge.agent_id == dto.agent_id, Knowledge.is_deleted == 0]
+        if dto.title:
+            conditions.append(Knowledge.title.contains(dto.title))
+        if dto.type:
+            conditions.append(Knowledge.type == dto.type)
+        if dto.embedding_status:
+            conditions.append(Knowledge.embedding_status == dto.embedding_status)
+
+        # 总数
+        count_result = await db.execute(
+            select(func.count(Knowledge.id)).where(and_(*conditions))
+        )
+        total = count_result.scalar() or 0
+
+        # 计算总页数
+        total_pages = (total + dto.page_size - 1) // dto.page_size
+        offset = (dto.page_num - 1) * dto.page_size
+
+        # 分页数据
+        result = await db.execute(
+            select(Knowledge)
+            .where(and_(*conditions))
+            .order_by(Knowledge.created_at.desc())
+            .offset(offset)
+            .limit(dto.page_size)
+        )
+        items = list(result.scalars().all())
+
+        return items, total, dto.page_num, dto.page_size, total_pages
+
+    @staticmethod
+    async def retry_embedding(db: AsyncSession, knowledge_id: int) -> Optional[Knowledge]:
+        """重试向量化 — 对齐 Java retryEmbedding()"""
+        knowledge = await KnowledgeService.get_knowledge(db, knowledge_id)
+        if not knowledge:
+            return None
+
+        knowledge.embedding_status = "PENDING"
+        knowledge.error_msg = None
+        await db.commit()
+        await db.refresh(knowledge)
+
+        # 重新执行向量化
+        try:
+            vector_store = get_vector_store()
+            collection_name = KnowledgeService._get_collection_name(knowledge.agent_id)
+            text = f"{knowledge.title}\n{knowledge.content}"
+            embedding_id = f"knowledge_{knowledge.id}"
+
+            await vector_store.add_document(
+                collection_name=collection_name,
+                doc_id=embedding_id,
+                text=text,
+                metadata={
+                    "knowledge_id": knowledge.id,
+                    "type": knowledge.type,
+                    "title": knowledge.title,
+                },
+            )
+
+            knowledge.embedding_status = "COMPLETED"
+            knowledge.embedding_id = embedding_id
+            await db.commit()
+            await db.refresh(knowledge)
+            logger.info(f"Retry embedding succeeded for knowledge {knowledge_id}")
+        except Exception as e:
+            knowledge.embedding_status = "FAILED"
+            knowledge.error_msg = str(e)
+            await db.commit()
+            await db.refresh(knowledge)
+            logger.error(f"Retry embedding failed for knowledge {knowledge_id}: {e}")
+
+        return knowledge

@@ -75,3 +75,25 @@ class KnowledgeSearchResult(BaseModel):
     type: str
     metadata: Optional[Dict[str, Any]] = None
     distance: Optional[float] = Field(None, description="相似度距离（越小越相似）")
+
+
+# ================================================================
+# Java-aligned DTOs
+# ================================================================
+
+class AgentKnowledgeQueryDTO(BaseModel):
+    """分页查询 DTO — 对齐 Java AgentKnowledgeQueryDTO"""
+    agent_id: int = Field(..., alias="agentId")
+    title: Optional[str] = None
+    type: Optional[str] = None
+    embedding_status: Optional[str] = Field(None, alias="embeddingStatus")
+    page_num: int = Field(1, alias="pageNum", ge=1)
+    page_size: int = Field(10, alias="pageSize", ge=1)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class UpdateKnowledgeDTO(BaseModel):
+    """更新知识 DTO — 对齐 Java UpdateKnowledgeDTO (仅 title + content)"""
+    title: Optional[str] = None
+    content: Optional[str] = None
