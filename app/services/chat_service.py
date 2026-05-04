@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from ..models.chat_session import ChatSession
 from ..models.chat_message import ChatMessage
+from ..services.session_event_publisher import SessionEventPublisher
 
 
 class ChatService:
@@ -78,11 +79,15 @@ class ChatService:
 
     @staticmethod
     async def rename_session(db: AsyncSession, session_id: str, title: str):
-        """重命名会话 — 对齐 Java renameSession"""
+        """重命名会话 — 对齐 Java renameSession + SessionEventPublisher"""
         session = await ChatService.get_session(db, session_id)
         if session:
             session.title = title.strip()
             await db.commit()
+            # Push title update event to SSE subscribers
+            await SessionEventPublisher.publish_title_updated(
+                session.agent_id, session_id, session.title
+            )
 
     @staticmethod
     async def delete_session(db: AsyncSession, session_id: str) -> bool:

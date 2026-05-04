@@ -1,7 +1,9 @@
-"""Chat API — 对齐 Java ChatController"""
+"""Chat API — 对齐 Java ChatController + SessionEventController"""
+import asyncio
+import json
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, Dict, Any
 from datetime import datetime
@@ -9,6 +11,7 @@ from datetime import datetime
 from ..core.database import get_db
 from ..services.chat_service import ChatService
 from ..services.agent_service import AgentService
+from ..services.session_event_publisher import SessionEventPublisher
 from ..schemas.chat_session import ChatSessionCreate, ChatSessionResponse
 from ..schemas.chat_message import ChatMessageCreate, ChatMessageResponse
 
@@ -76,6 +79,41 @@ async def clear_sessions(agent_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Agent 不存在")
     count = await ChatService.clear_sessions(db, agent_id)
     return {"success": True, "message": f"已清空 {count} 个会话", "data": None}
+
+
+@router.get("/agent/{agent_id}/sessions/stream", summary="SSE 会话事件流")
+async def stream_session_events(agent_id: int, db: AsyncSession = Depends(get_db)):
+    """SSE 端点：推送会话标题更新等事件 — GET /api/agent/{agentId}/sessions/stream
+    对齐 Java SessionEventController.streamSessionUpdates()"""
+    agent = await AgentService.get_agent(db, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent 不存在")
+
+    queue = await SessionEventPublisher.register(agent_id)
+
+    async def event_generator():
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=2.0)
+                    data = event.model_dump(by_alias=True)
+                    yield f"event: {event.type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": heartbeat\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await SessionEventPublisher.unregister(agent_id, queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
 
 
 # ==================================================================
