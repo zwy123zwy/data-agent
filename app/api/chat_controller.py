@@ -147,6 +147,15 @@ async def save_message(
         message_type=request.message_type,
         metadata=request.metadata,
     )
+    # 对齐 Java: titleNeeded 时异步生成会话标题
+    if request.title_needed and request.role == "user":
+        from ..services.session_title_service import schedule_title_generation
+        from ..core.database import async_session_factory
+        asyncio.create_task(
+            schedule_title_generation(
+                session_id, session.agent_id, request.content, ChatService, async_session_factory
+            )
+        )
     return message
 
 

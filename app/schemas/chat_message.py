@@ -10,6 +10,7 @@ class ChatMessageCreate(BaseModel):
     content: str
     message_type: str = Field("text", pattern="^(text|sql|result|error)$")
     metadata: Optional[Dict[str, Any]] = Field(None, alias="metadata_")
+    title_needed: bool = Field(False, alias="titleNeeded", description="是否需要自动生成标题")
 
 
 class ChatMessageResponse(BaseModel):
