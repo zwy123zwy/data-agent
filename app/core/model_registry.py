@@ -1,37 +1,14 @@
 """
 模型注册表服务 — LLM 模型的动态管理和热切换
 
-【在系统中的地位】
-  本服务管理所有 LLM 模型配置 (Chat + Embedding)。支持运行时热切换:
-  用户在前端切换默认模型后，后续所有 LLM 调用自动使用新模型。
-
-【模块连接】
-  上游 (谁调用 ModelRegistry):
-    - api/model_config_controller.py → CRUD API: register, update, delete, test
-    - core/llm.py:LLMService         → (可选) 可通过 registry 动态切换模型
-
-  被依赖:
-    - models/model_config.py         → ModelConfig ORM (MySQL 表映射)
-    - schemas/model_config.py        → Pydantic DTO (请求/响应验证)
-    - openai.OpenAI                  → 同步客户端 (用于模型测试)
-
-  数据存储:
-    - 主存储: MySQL model_config 表 (持久化)
-    - 缓存:   self._cache Dict[str, ModelConfig] (内存加速)
-
-  Java 对应:
-    ModelRegistry ≈ AiModelRegistry.java
+对齐 Java AiModelRegistry
 
 【热切换机制】
   1. 用户 POST /api/model-config/activate/{id}
   2. 控制器调用 set_default_model(id)
-  3. is_default=True 写入 DB + 更新内存缓存
-  4. 后续 LLM 调用从缓存读取默认模型配置
+  3. is_active=True 写入 DB + 更新内存缓存
+  4. 后续 LLM 调用从缓存读取激活模型配置
   5. 无需重启服务 — 真正的热切换
-
-【扩展字段存储】
-  proxy/path 等扩展字段不在 ModelConfig 表有独立列，
-  而是序列化到 metadata_ JSON 列中。_split_extra_fields() 负责分离。
 """
 from typing import Dict, Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class ModelRegistry:
-    """模型注册表"""
+    """模型注册表 — 对齐 Java AiModelRegistry"""
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -54,184 +31,156 @@ class ModelRegistry:
     async def _load_models(self):
         """从数据库加载模型配置"""
         result = await self.db.execute(
-            select(ModelConfig).filter(ModelConfig.enabled == True)
+            select(ModelConfig).filter(
+                ModelConfig.is_deleted == 0
+            )
         )
         models = result.scalars().all()
         for model in models:
-            self._cache[model.name] = model
+            key = f"{model.provider}-{model.model_name}"
+            self._cache[key] = model
         logger.info(f"Loaded {len(self._cache)} models from database")
 
-    # 需要存入 metadata 的扩展字段
-    _EXTRA_FIELDS = {
-        "completions_path", "embeddings_path",
-        "proxy_enabled", "proxy_host", "proxy_port",
-        "proxy_username", "proxy_password",
-    }
-
-    # DB 列名 (可用于 ModelConfig 构造)
-    _DB_FIELDS = {
-        "name", "type", "provider", "model_id", "api_key", "api_base",
-        "temperature", "max_tokens", "enabled", "is_default", "metadata_",
-    }
-
-    @classmethod
-    def _split_extra_fields(cls, data: Dict) -> Dict:
-        """将扩展字段提取到 metadata_ 中"""
-        extra = {}
-        for key in list(data.keys()):
-            if key in cls._EXTRA_FIELDS and data[key] is not None:
-                extra[key] = data.pop(key)
-            elif key in cls._EXTRA_FIELDS:
-                data.pop(key, None)
-        if "metadata" in data:
-            data["metadata_"] = data.pop("metadata")
-        if extra:
-            existing_meta = data.get("metadata_") or {}
-            if isinstance(existing_meta, dict):
-                existing_meta.update(extra)
-                data["metadata_"] = existing_meta
-            else:
-                data["metadata_"] = extra
-        return data
-
     async def register_model(self, config: ModelConfigCreate) -> ModelConfig:
-        """注册模型"""
-        # 如果设置为默认，先取消其他默认模型
-        if config.is_default:
+        """注册模型 — 对齐 Java registerModel()"""
+        # 如果设为激活，先取消同类型其他激活模型
+        if config.is_active:
             await self.db.execute(
                 update(ModelConfig)
-                .where(ModelConfig.type == config.type, ModelConfig.is_default == True)
-                .values(is_default=False)
+                .where(
+                    ModelConfig.model_type == config.model_type,
+                    ModelConfig.is_active == 1,
+                )
+                .values(is_active=0)
             )
 
-        # 创建模型配置 — 过滤掉非 DB 字段
         data = config.model_dump()
-        data = self._split_extra_fields(data)
-        # 移除不属于 DB 列的键
-        data = {k: v for k, v in data.items() if k in self._DB_FIELDS}
         model = ModelConfig(**data)
         self.db.add(model)
         await self.db.commit()
         await self.db.refresh(model)
 
-        # 更新缓存
-        self._cache[model.name] = model
-        logger.info(f"Registered model: {model.name}")
+        key = f"{model.provider}-{model.model_name}"
+        self._cache[key] = model
+        logger.info(f"Registered model: {model.provider}/{model.model_name}")
 
         return model
 
-    def get_model(self, name: str) -> Optional[ModelConfig]:
-        """获取模型配置"""
-        return self._cache.get(name)
+    def get_model(self, key: str) -> Optional[ModelConfig]:
+        """获取模型配置 (by cache key)"""
+        return self._cache.get(key)
 
     async def get_model_by_id(self, model_id: int) -> Optional[ModelConfig]:
         """根据 ID 获取模型配置"""
         result = await self.db.execute(
-            select(ModelConfig).filter(ModelConfig.id == model_id)
+            select(ModelConfig).filter(
+                ModelConfig.id == model_id,
+                ModelConfig.is_deleted == 0,
+            )
         )
-        model = result.scalar_one_or_none()
-        return model
+        return result.scalar_one_or_none()
 
-    async def list_models(self, type: Optional[str] = None, enabled: Optional[bool] = None) -> List[ModelConfig]:
+    async def list_models(
+        self, type: Optional[str] = None, enabled: Optional[bool] = None
+    ) -> List[ModelConfig]:
         """列出模型配置"""
-        query = select(ModelConfig)
+        query = select(ModelConfig).filter(ModelConfig.is_deleted == 0)
 
         if type:
-            query = query.filter(ModelConfig.type == type)
-        if enabled is not None:
-            query = query.filter(ModelConfig.enabled == enabled)
+            query = query.filter(ModelConfig.model_type == type.upper())
+        if enabled is True:
+            query = query.filter(ModelConfig.is_active == 1)
 
         result = await self.db.execute(query)
         return result.scalars().all()
 
-    async def get_default_model(self, type: str = "chat") -> Optional[ModelConfig]:
-        """获取默认模型"""
+    async def get_default_model(self, model_type: str = "CHAT") -> Optional[ModelConfig]:
+        """获取当前激活的模型 — 对齐 Java getActiveModel()"""
         result = await self.db.execute(
             select(ModelConfig).filter(
-                ModelConfig.type == type,
-                ModelConfig.is_default == True,
-                ModelConfig.enabled == True
+                ModelConfig.model_type == model_type.upper(),
+                ModelConfig.is_active == 1,
+                ModelConfig.is_deleted == 0,
             )
         )
-        model = result.scalar_one_or_none()
-        return model
+        return result.scalar_one_or_none()
 
-    async def update_model(self, model_id: int, update_data: ModelConfigUpdate) -> Optional[ModelConfig]:
-        """更新模型配置"""
+    async def update_model(
+        self, model_id: int, update_data: ModelConfigUpdate
+    ) -> Optional[ModelConfig]:
+        """更新模型配置 — 对齐 Java updateModel()"""
         model = await self.get_model_by_id(model_id)
         if not model:
             return None
 
-        # 如果设置为默认，先取消其他默认模型
-        if update_data.is_default:
+        # 如果设为激活，先取消同类型其他激活模型
+        if update_data.is_active:
             await self.db.execute(
                 update(ModelConfig)
                 .where(
-                    ModelConfig.type == model.type,
-                    ModelConfig.is_default == True,
-                    ModelConfig.id != model_id
+                    ModelConfig.model_type == (update_data.model_type or model.model_type).upper(),
+                    ModelConfig.is_active == 1,
+                    ModelConfig.id != model_id,
                 )
-                .values(is_default=False)
+                .values(is_active=0)
             )
 
-        # 更新字段
         update_dict = update_data.model_dump(exclude_unset=True)
-        update_dict.pop("id", None)  # 不更新 id 字段
-        update_dict = self._split_extra_fields(update_dict)
-        update_dict = {k: v for k, v in update_dict.items() if k in self._DB_FIELDS}
+        update_dict.pop("id", None)
         for key, value in update_dict.items():
             setattr(model, key, value)
 
         await self.db.commit()
         await self.db.refresh(model)
 
-        # 更新缓存
-        self._cache[model.name] = model
-        logger.info(f"Updated model: {model.name}")
+        key = f"{model.provider}-{model.model_name}"
+        self._cache[key] = model
+        logger.info(f"Updated model: {model.provider}/{model.model_name}")
 
         return model
 
     async def delete_model(self, model_id: int) -> bool:
-        """删除模型配置"""
+        """软删除模型配置 — 对齐 Java deleteModel()"""
         model = await self.get_model_by_id(model_id)
         if not model:
             return False
 
-        # 从缓存中移除
-        if model.name in self._cache:
-            del self._cache[model.name]
+        # 软删除
+        model.is_deleted = 1
+        model.is_active = 0
 
-        await self.db.delete(model)
+        key = f"{model.provider}-{model.model_name}"
+        if key in self._cache:
+            del self._cache[key]
+
         await self.db.commit()
-        logger.info(f"Deleted model: {model.name}")
-
+        logger.info(f"Soft-deleted model: {model.provider}/{model.model_name}")
         return True
 
     async def set_default_model(self, model_id: int) -> Optional[ModelConfig]:
-        """设置默认模型"""
+        """激活模型 — 对齐 Java activateModel()"""
         model = await self.get_model_by_id(model_id)
         if not model:
             return None
 
-        # 取消同类型的其他默认模型
+        # 取消同类型的其他激活模型
         await self.db.execute(
             update(ModelConfig)
             .where(
-                ModelConfig.type == model.type,
-                ModelConfig.is_default == True,
-                ModelConfig.id != model_id
+                ModelConfig.model_type == model.model_type,
+                ModelConfig.is_active == 1,
+                ModelConfig.id != model_id,
             )
-            .values(is_default=False)
+            .values(is_active=0)
         )
 
-        # 设置为默认
-        model.is_default = True
+        model.is_active = 1
         await self.db.commit()
         await self.db.refresh(model)
 
-        # 更新缓存
-        self._cache[model.name] = model
-        logger.info(f"Set default model: {model.name}")
+        key = f"{model.provider}-{model.model_name}"
+        self._cache[key] = model
+        logger.info(f"Activated model: {model.provider}/{model.model_name}")
 
         return model
 
@@ -243,8 +192,8 @@ class ModelRegistry:
 
         return await self._do_test(
             api_key=model.api_key,
-            api_base=model.api_base,
-            model_id=model.model_id,
+            base_url=model.base_url,
+            model_name=model.model_name,
             temperature=model.temperature,
             max_tokens=model.max_tokens or 100,
             prompt=prompt,
@@ -254,21 +203,21 @@ class ModelRegistry:
         self,
         provider: Optional[str] = None,
         api_key: Optional[str] = None,
-        api_base: Optional[str] = None,
-        model_id: Optional[str] = None,
+        base_url: Optional[str] = None,
+        model_name: Optional[str] = None,
         model_type: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         prompt: Optional[str] = None,
     ) -> Dict:
         """测试模型配置 (无需预存) — 对齐 Java POST /api/model-config/test"""
-        if not api_key or not model_id:
+        if not api_key or not model_name:
             return {"success": False, "error": "apiKey 和 modelName 不能为空"}
 
         return await self._do_test(
             api_key=api_key,
-            api_base=api_base or "",
-            model_id=model_id,
+            base_url=base_url or "",
+            model_name=model_name,
             temperature=temperature or 0.0,
             max_tokens=max_tokens or 100,
             prompt=prompt or "Hello, how are you?",
@@ -277,69 +226,55 @@ class ModelRegistry:
     async def _do_test(
         self,
         api_key: str,
-        api_base: str,
-        model_id: str,
+        base_url: str,
+        model_name: str,
         temperature: float,
         max_tokens: int,
         prompt: str,
     ) -> Dict:
         """执行实际的模型测试调用"""
         try:
-            client = OpenAI(
-                api_key=api_key,
-                base_url=api_base
-            )
-
+            client = OpenAI(api_key=api_key, base_url=base_url)
             response = client.chat.completions.create(
-                model=model_id,
+                model=model_name,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=temperature,
-                max_tokens=max_tokens
+                max_tokens=max_tokens,
             )
-
             return {
                 "success": True,
                 "response": response.choices[0].message.content,
                 "usage": {
                     "prompt_tokens": response.usage.prompt_tokens,
                     "completion_tokens": response.usage.completion_tokens,
-                    "total_tokens": response.usage.total_tokens
-                }
+                    "total_tokens": response.usage.total_tokens,
+                },
             }
         except Exception as e:
             logger.error(f"Model test failed: {str(e)}")
             return {"success": False, "error": str(e)}
 
-    def create_client(self, model_name: Optional[str] = None, model_type: str = "chat") -> OpenAI:
-        """创建 LLM 客户端（同步方法，从缓存获取）"""
-        if model_name:
-            model = self.get_model(model_name)
-        else:
-            # 从缓存中查找默认模型
-            model = None
-            for m in self._cache.values():
-                if m.type == model_type and m.is_default and m.enabled:
-                    model = m
-                    break
+    def create_client(
+        self, model_type: str = "CHAT"
+    ) -> OpenAI:
+        """创建 LLM 客户端 (从缓存获取激活模型) — 对齐 Java createClient()"""
+        model = None
+        for m in self._cache.values():
+            if m.model_type == model_type.upper() and m.is_active == 1 and m.is_deleted == 0:
+                model = m
+                break
 
         if not model:
-            raise ValueError(f"Model not found: {model_name or 'default'}")
+            raise ValueError(f"No active model found for type: {model_type}")
 
-        return OpenAI(
-            api_key=model.api_key,
-            base_url=model.api_base
-        )
+        return OpenAI(api_key=model.api_key, base_url=model.base_url)
 
-    def get_model_config(self, model_name: Optional[str] = None, model_type: str = "chat") -> Optional[ModelConfig]:
-        """获取模型配置（用于创建客户端）"""
-        if model_name:
-            return self.get_model(model_name)
-        else:
-            # 从缓存中查找默认模型
-            for m in self._cache.values():
-                if m.type == model_type and m.is_default and m.enabled:
-                    return m
-            return None
+    def get_model_config(self, model_type: str = "CHAT") -> Optional[ModelConfig]:
+        """获取激活的模型配置"""
+        for m in self._cache.values():
+            if m.model_type == model_type.upper() and m.is_active == 1 and m.is_deleted == 0:
+                return m
+        return None
 
 
 # 全局模型注册表实例

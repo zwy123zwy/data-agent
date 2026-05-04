@@ -36,9 +36,6 @@ async def list_models(
 async def create_model(config: ModelConfigCreate, db: AsyncSession = Depends(get_db)):
     """新增模型配置 — 对齐 Java POST /api/model-config/add"""
     registry = get_model_registry(db)
-    # 自动生成 name (如果未提供)
-    if not config.name:
-        config.name = f"{config.provider}-{config.model_id}"
     try:
         model = await registry.register_model(config)
         return {"success": True, "message": "模型配置创建成功", "data": None}
@@ -86,9 +83,9 @@ async def test_model(request: ModelTestRequest, db: AsyncSession = Depends(get_d
     result = await registry.test_model_with_config(
         provider=request.provider,
         api_key=request.api_key,
-        api_base=request.api_base,
-        model_id=request.model_id,
-        model_type=request.type,
+        base_url=request.base_url,
+        model_name=request.model_name,
+        model_type=request.model_type,
         temperature=request.temperature,
         max_tokens=request.max_tokens,
         prompt=request.prompt,
@@ -130,8 +127,6 @@ async def list_models_compat(
 async def create_model_compat(config: ModelConfigCreate, db: AsyncSession = Depends(get_db)):
     """[兼容旧路由] POST /api/model-config — 等同于 /add"""
     registry = get_model_registry(db)
-    if not config.name:
-        config.name = f"{config.provider}-{config.model_id}"
     try:
         model = await registry.register_model(config)
         return {"success": True, "message": "模型配置创建成功", "data": None}

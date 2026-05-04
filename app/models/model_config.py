@@ -1,56 +1,40 @@
 """
-ModelConfig ORM 模型
-模型配置 - 支持多模型管理
+ModelConfig ORM 模型 — 对齐 Java model_config 表
 """
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, JSON
-from sqlalchemy.sql import func
+from datetime import datetime
+from typing import Optional
+from sqlalchemy import String, Integer, Text, DateTime
+from sqlalchemy.orm import Mapped, mapped_column
 from ..core.database import Base
 
 
 class ModelConfig(Base):
-    """模型配置"""
+    """模型配置 — 对齐 Java ModelConfig entity"""
     __tablename__ = "model_config"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(100), nullable=False, unique=True, comment="模型名称")
-    type = Column(String(50), nullable=False, comment="模型类型: chat, embedding")
-    provider = Column(String(50), nullable=False, comment="提供商: openai, anthropic, qwen")
-    model_id = Column(String(100), nullable=False, comment="模型ID")
-    api_key = Column(String(255), comment="API Key")
-    api_base = Column(String(255), comment="API Base URL")
-    temperature = Column(Float, default=0.0, comment="温度参数")
-    max_tokens = Column(Integer, comment="最大 Token 数")
-    enabled = Column(Boolean, default=True, nullable=False, comment="是否启用")
-    is_default = Column(Boolean, default=False, nullable=False, comment="是否默认")
-    metadata_ = Column("metadata", JSON, comment="其他配置")
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    provider: Mapped[str] = mapped_column(String(255), nullable=False, comment="厂商标识")
+    base_url: Mapped[str] = mapped_column(String(255), nullable=False, default="", comment="API Base URL")
+    api_key: Mapped[str] = mapped_column(String(255), nullable=False, default="", comment="API密钥")
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False, default="", comment="模型名称")
+    model_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="CHAT", comment="模型类型: CHAT/EMBEDDING"
+    )
+    temperature: Mapped[float] = mapped_column(default=0.0, comment="温度参数")
+    is_active: Mapped[int] = mapped_column(Integer, default=0, comment="是否激活：0-否，1-是")
+    max_tokens: Mapped[Optional[int]] = mapped_column(Integer, default=2000, comment="最大 Token 数")
+    completions_path: Mapped[Optional[str]] = mapped_column(String(255), comment="Chat completions 路径")
+    embeddings_path: Mapped[Optional[str]] = mapped_column(String(255), comment="Embedding 路径")
+    proxy_enabled: Mapped[int] = mapped_column(Integer, default=0, comment="代理开关：0-禁用，1-启用")
+    proxy_host: Mapped[Optional[str]] = mapped_column(String(255), comment="代理主机")
+    proxy_port: Mapped[Optional[int]] = mapped_column(Integer, comment="代理端口")
+    proxy_username: Mapped[Optional[str]] = mapped_column(String(255), comment="代理用户名")
+    proxy_password: Mapped[Optional[str]] = mapped_column(String(255), comment="代理密码")
+    is_deleted: Mapped[int] = mapped_column(Integer, default=0, comment="0=未删除, 1=已删除")
+    created_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, comment="创建时间")
+    updated_time: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间"
+    )
 
-    # 从 metadata_ JSON 暴露的扩展属性 (对齐 Java)
-    @property
-    def completions_path(self) -> Optional[str]:
-        return (self.metadata_ or {}).get("completions_path")
-
-    @property
-    def embeddings_path(self) -> Optional[str]:
-        return (self.metadata_ or {}).get("embeddings_path")
-
-    @property
-    def proxy_enabled(self) -> Optional[bool]:
-        return (self.metadata_ or {}).get("proxy_enabled")
-
-    @property
-    def proxy_host(self) -> Optional[str]:
-        return (self.metadata_ or {}).get("proxy_host")
-
-    @property
-    def proxy_port(self) -> Optional[int]:
-        return (self.metadata_ or {}).get("proxy_port")
-
-    @property
-    def proxy_username(self) -> Optional[str]:
-        return (self.metadata_ or {}).get("proxy_username")
-
-    @property
-    def proxy_password(self) -> Optional[str]:
-        return (self.metadata_ or {}).get("proxy_password")
+    def __repr__(self):
+        return f"<ModelConfig(id={self.id}, provider='{self.provider}', model='{self.model_name}')>"
