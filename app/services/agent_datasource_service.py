@@ -20,7 +20,7 @@ class AgentDatasourceService:
         db: AsyncSession,
         agent_id: int,
         datasource_id: int,
-        is_active: bool = True
+        is_active: int = 1
     ) -> AgentDatasource:
         """绑定数据源到 Agent"""
         agent_result = await db.execute(select(Agent).where(Agent.id == agent_id))
@@ -52,7 +52,7 @@ class AgentDatasourceService:
                 select(AgentDatasource).where(AgentDatasource.agent_id == agent_id)
             )
             for ad in result.scalars().all():
-                ad.is_active = False
+                ad.is_active = 0
 
         agent_datasource = AgentDatasource(
             agent_id=agent_id,
@@ -120,7 +120,7 @@ class AgentDatasourceService:
                 id=agent_ds.id,
                 agent_id=agent_ds.agent_id,
                 datasource_id=agent_ds.datasource_id,
-                is_active=bool(agent_ds.is_active),
+                is_active=int(agent_ds.is_active or 0),
                 created_at=agent_ds.created_at,
                 updated_at=getattr(agent_ds, "updated_at", None),
                 datasource=DatasourceResponse.model_validate(datasource),
@@ -141,7 +141,7 @@ class AgentDatasourceService:
             .where(
                 and_(
                     AgentDatasource.agent_id == agent_id,
-                    AgentDatasource.is_active == True
+                    AgentDatasource.is_active == 1
                 )
             )
         )
@@ -159,7 +159,7 @@ class AgentDatasourceService:
             select(AgentDatasource).where(AgentDatasource.agent_id == agent_id)
         )
         for ad in result.scalars().all():
-            ad.is_active = False
+            ad.is_active = 0
 
         target_result = await db.execute(
             select(AgentDatasource).where(
@@ -173,7 +173,7 @@ class AgentDatasourceService:
         if not target:
             raise ValueError("Agent-Datasource binding not found")
 
-        target.is_active = True
+        target.is_active = 1
         await db.flush()
         await db.refresh(target)
         return target
@@ -183,7 +183,7 @@ class AgentDatasourceService:
         db: AsyncSession,
         agent_id: int,
         datasource_id: int,
-        is_active: bool,
+        is_active: int,
     ) -> AgentDatasource:
         """切换数据源激活状态 — 对齐 Java toggleDatasourceForAgent()"""
         target_result = await db.execute(
@@ -204,7 +204,7 @@ class AgentDatasourceService:
                 select(AgentDatasource).where(AgentDatasource.agent_id == agent_id)
             )
             for ad in result.scalars().all():
-                ad.is_active = False
+                ad.is_active = 0
 
         target.is_active = is_active
         await db.flush()
@@ -282,7 +282,7 @@ class AgentDatasourceService:
             select(AgentDatasource).where(
                 and_(
                     AgentDatasource.agent_id == agent_id,
-                    AgentDatasource.is_active == True,
+                    AgentDatasource.is_active == 1,
                 )
             )
         )

@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import Integer, ForeignKey, Boolean, DateTime
+from sqlalchemy import Integer, ForeignKey, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from ..core.database import Base
 
@@ -23,11 +23,11 @@ class AgentDatasource(Base):
         nullable=False,
         comment="Datasource ID"
     )
-    is_active: Mapped[bool] = mapped_column(
-        Boolean,
+    is_active: Mapped[int] = mapped_column(
+        Integer,
         nullable=False,
-        default=True,
-        comment="是否为当前激活的数据源"
+        default=1,
+        comment="是否启用：0-禁用，1-启用"
     )
 
     # 时间戳
