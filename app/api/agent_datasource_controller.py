@@ -1,157 +1,159 @@
+"""
+AgentDatasource API — 对齐 Java AgentDatasourceController
+"""
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.database import get_db
 from ..schemas.agent_datasource import (
     AgentDatasourceCreate,
     AgentDatasourceResponse,
-    AgentDatasourceWithDetails,
-    AgentDatasourceListResponse
+    ToggleDatasourceRequest,
+    UpdateDatasourceTablesRequest,
 )
 from ..schemas.datasource import DatasourceResponse
 from ..services.agent_datasource_service import AgentDatasourceService
 
 router = APIRouter(prefix="/api/agent", tags=["Agent-Datasource关联"])
 
-
-@router.post(
-    "/{agent_id}/datasources/{datasource_id}",
-    response_model=AgentDatasourceResponse,
-    status_code=201,
-    summary="绑定数据源到Agent"
-)
-async def bind_datasource(
-    agent_id: int,
-    datasource_id: int,
-    bind_data: AgentDatasourceCreate = AgentDatasourceCreate(),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    绑定数据源到 Agent
-
-    - **agent_id**: Agent ID
-    - **datasource_id**: Datasource ID
-    - **is_active**: 是否激活（默认 true）
-
-    如果设置为激活，会自动将该 Agent 的其他数据源设为非激活
-    """
-    try:
-        agent_datasource = await AgentDatasourceService.bind_datasource(
-            db, agent_id, datasource_id, bind_data.is_active
-        )
-        return agent_datasource
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+# ═══════════════════════════════════════════════════════════════
+# 静态路径必须在路径参数之前注册，避免 FastAPI 路由冲突
+# ═══════════════════════════════════════════════════════════════
 
 
-@router.delete(
-    "/{agent_id}/datasources/{datasource_id}",
-    status_code=204,
-    summary="解绑数据源"
-)
-async def unbind_datasource(
-    agent_id: int,
-    datasource_id: int,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    解绑 Agent 的数据源
-
-    - **agent_id**: Agent ID
-    - **datasource_id**: Datasource ID
-    """
-    success = await AgentDatasourceService.unbind_datasource(db, agent_id, datasource_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="Agent-Datasource binding not found")
-    return None
-
-
-@router.get(
-    "/{agent_id}/datasources",
-    response_model=AgentDatasourceListResponse,
-    summary="列出Agent的所有数据源"
-)
+@router.get("/{agent_id}/datasources", summary="列出Agent的所有数据源")
 async def list_agent_datasources(
     agent_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    列出 Agent 的所有数据源
-
-    - **agent_id**: Agent ID
-
-    返回数据源列表，包含数据源详情和激活状态
-    """
+    """列出 Agent 的所有数据源 — 对齐 Java GET /{agentId}/datasources"""
     try:
-        items, total = await AgentDatasourceService.list_agent_datasources(db, agent_id)
-
-        # 构建响应
-        response_items = []
-        for agent_datasource, datasource in items:
-            item = AgentDatasourceWithDetails(
-                id=agent_datasource.id,
-                agent_id=agent_datasource.agent_id,
-                datasource_id=agent_datasource.datasource_id,
-                is_active=agent_datasource.is_active,
-                created_at=agent_datasource.created_at,
-                datasource={
-                    "id": datasource.id,
-                    "name": datasource.name,
-                    "type": datasource.type,
-                    "database": datasource.database,
-                    "test_status": datasource.test_status
-                }
-            )
-            response_items.append(item)
-
-        return AgentDatasourceListResponse(total=total, items=response_items)
+        items = await AgentDatasourceService.list_agent_datasources(db, agent_id)
+        return {
+            "success": True,
+            "message": "操作成功",
+            "data": [item.model_dump(by_alias=True) for item in items],
+        }
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.get(
-    "/{agent_id}/datasources/active",
-    response_model=DatasourceResponse,
-    summary="获取Agent的激活数据源"
-)
+@router.get("/{agent_id}/datasources/active", summary="获取Agent的激活数据源")
 async def get_active_datasource(
     agent_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    获取 Agent 当前激活的数据源
-
-    - **agent_id**: Agent ID
-
-    返回激活的数据源详情，如果没有激活的数据源则返回 404
-    """
-    datasource = await AgentDatasourceService.get_active_datasource(db, agent_id)
-    if not datasource:
+    """获取 Agent 当前激活的数据源 — 对齐 Java GET /{agentId}/datasources/active"""
+    ds = await AgentDatasourceService.get_active_datasource(db, agent_id)
+    if not ds:
         raise HTTPException(status_code=404, detail="No active datasource found for this Agent")
-    return datasource
+    return {
+        "success": True,
+        "message": "操作成功",
+        "data": DatasourceResponse.model_validate(ds).model_dump(by_alias=True),
+    }
 
 
-@router.post(
-    "/{agent_id}/datasources/{datasource_id}/activate",
-    response_model=AgentDatasourceResponse,
-    summary="激活数据源"
-)
+@router.put("/{agent_id}/datasources/toggle", summary="切换数据源启用/禁用")
+async def toggle_datasource(
+    agent_id: int,
+    dto: ToggleDatasourceRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """启用/禁用 Agent 的数据源 — 对齐 Java PUT /{agentId}/datasources/toggle"""
+    try:
+        agent_ds = await AgentDatasourceService.toggle_datasource(
+            db, agent_id, dto.datasource_id, dto.is_active
+        )
+        resp = AgentDatasourceResponse(
+            id=agent_ds.id,
+            agent_id=agent_ds.agent_id,
+            datasource_id=agent_ds.datasource_id,
+            is_active=bool(agent_ds.is_active),
+            created_at=agent_ds.created_at,
+            updated_at=getattr(agent_ds, "updated_at", None),
+            select_tables=[],
+        )
+        msg = "数据源已启用" if dto.is_active else "数据源已禁用"
+        return {"success": True, "message": msg, "data": resp.model_dump(by_alias=True)}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/{agent_id}/datasources/tables", summary="更新选中的数据表")
+async def update_datasource_tables(
+    agent_id: int,
+    dto: UpdateDatasourceTablesRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """更新 Agent 数据源选中的表 — 对齐 Java POST /{agentId}/datasources/tables"""
+    try:
+        await AgentDatasourceService.update_datasource_tables(
+            db, agent_id, dto.datasource_id, dto.tables
+        )
+        return {"success": True, "message": "更新成功", "data": None}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/{agent_id}/datasources/{datasource_id}", summary="绑定数据源到Agent")
+async def bind_datasource(
+    agent_id: int,
+    datasource_id: int,
+    bind_data: AgentDatasourceCreate = AgentDatasourceCreate(),
+    db: AsyncSession = Depends(get_db),
+):
+    """绑定数据源到 Agent — 对齐 Java POST /{agentId}/datasources/{datasourceId}"""
+    try:
+        agent_ds = await AgentDatasourceService.bind_datasource(
+            db, agent_id, datasource_id, bind_data.is_active
+        )
+        resp = AgentDatasourceResponse(
+            id=agent_ds.id,
+            agent_id=agent_ds.agent_id,
+            datasource_id=agent_ds.datasource_id,
+            is_active=bool(agent_ds.is_active),
+            created_at=agent_ds.created_at,
+            updated_at=getattr(agent_ds, "updated_at", None),
+            select_tables=[],
+        ).model_dump(by_alias=True)
+        return {"success": True, "message": "数据源添加成功", "data": resp}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/{agent_id}/datasources/{datasource_id}", summary="解绑数据源")
+async def unbind_datasource(
+    agent_id: int,
+    datasource_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """解绑 Agent 的数据源 — 对齐 Java DELETE /{agentId}/datasources/{datasourceId}"""
+    success = await AgentDatasourceService.unbind_datasource(db, agent_id, datasource_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Agent-Datasource binding not found")
+    return {"success": True, "message": "数据源已移除"}
+
+
+@router.post("/{agent_id}/datasources/{datasource_id}/activate", summary="激活数据源")
 async def activate_datasource(
     agent_id: int,
     datasource_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    激活 Agent 的指定数据源
-
-    - **agent_id**: Agent ID
-    - **datasource_id**: Datasource ID
-
-    会自动将该 Agent 的其他数据源设为非激活
-    """
+    """激活 Agent 的指定数据源 — 保留兼容，推荐使用 PUT /toggle"""
     try:
-        agent_datasource = await AgentDatasourceService.activate_datasource(
+        agent_ds = await AgentDatasourceService.activate_datasource(
             db, agent_id, datasource_id
         )
-        return agent_datasource
+        resp = AgentDatasourceResponse(
+            id=agent_ds.id,
+            agent_id=agent_ds.agent_id,
+            datasource_id=agent_ds.datasource_id,
+            is_active=bool(agent_ds.is_active),
+            created_at=agent_ds.created_at,
+            updated_at=getattr(agent_ds, "updated_at", None),
+            select_tables=[],
+        ).model_dump(by_alias=True)
+        return {"success": True, "message": "数据源已启用", "data": resp}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

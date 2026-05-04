@@ -37,6 +37,13 @@ class AgentDatasource(Base):
         default=datetime.utcnow,
         comment="创建时间"
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        comment="更新时间"
+    )
 
     # 关系（暂时注释，避免循环导入）
     # agent: Mapped["Agent"] = relationship(back_populates="datasources")
