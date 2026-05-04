@@ -218,7 +218,15 @@ class AgentDatasourceService:
         datasource_id: int,
         tables: List[str],
     ):
-        """更新 Agent 数据源选中的表 — 对齐 Java updateDatasourceTables()"""
+        """更新 Agent 数据源选中的表 — 对齐 Java updateDatasourceTables()
+
+        Java 采用增量更新策略:
+          1. removeExpireTables() → DELETE WHERE table_name NOT IN (新列表)
+          2. insertNewTables()     → INSERT IGNORE (跳过已存在的)
+        只删除不再选中的表，只插入新增的表，未变的行原样保留。
+        """
+        from sqlalchemy import delete as sa_delete
+
         target_result = await db.execute(
             select(AgentDatasource).where(
                 and_(
@@ -231,27 +239,35 @@ class AgentDatasourceService:
         if not target:
             raise ValueError("Agent-Datasource binding not found")
 
-        # 删除旧的表选择
-        await db.execute(
-            select(AgentDatasourceTables).where(
-                AgentDatasourceTables.agent_datasource_id == target.id
+        if not tables:
+            # 空列表 → 删除全部
+            await db.execute(
+                sa_delete(AgentDatasourceTables).where(
+                    AgentDatasourceTables.agent_datasource_id == target.id
+                )
             )
-        )
-        old_tables = (await db.execute(
-            select(AgentDatasourceTables).where(
-                AgentDatasourceTables.agent_datasource_id == target.id
+        else:
+            # 1. removeExpireTables: 删除不在新列表中的旧表
+            await db.execute(
+                sa_delete(AgentDatasourceTables).where(
+                    AgentDatasourceTables.agent_datasource_id == target.id,
+                    AgentDatasourceTables.table_name.notin_(tables),
+                )
             )
-        )).scalars().all()
-        for old in old_tables:
-            await db.delete(old)
 
-        # 创建新的表选择
-        for table_name in tables:
-            adt = AgentDatasourceTables(
-                agent_datasource_id=target.id,
-                table_name=table_name,
+            # 2. insertNewTables: 只插入当前不存在的表 (INSERT IGNORE 等价)
+            existing_result = await db.execute(
+                select(AgentDatasourceTables.table_name).where(
+                    AgentDatasourceTables.agent_datasource_id == target.id
+                )
             )
-            db.add(adt)
+            existing_names = {row[0] for row in existing_result.all()}
+            new_tables = [t for t in tables if t not in existing_names]
+            for table_name in new_tables:
+                db.add(AgentDatasourceTables(
+                    agent_datasource_id=target.id,
+                    table_name=table_name,
+                ))
 
         await db.flush()
 
