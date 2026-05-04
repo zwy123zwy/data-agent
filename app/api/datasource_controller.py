@@ -8,6 +8,8 @@ from ..schemas.datasource import (
 )
 from ..services.datasource_service import DatasourceService
 from ..services.schema_service import SchemaService
+from ..services.logical_relation_service import LogicalRelationService
+from ..schemas.logical_relation import LogicalRelationCreate, LogicalRelationUpdate, LogicalRelationResponse
 
 router = APIRouter(prefix="/api/datasource", tags=["Datasource管理"])
 
@@ -43,6 +45,63 @@ async def list_datasource_types():
         {"code": 5, "typeName": "mssql",      "dialect": "SQLServer", "protocol": "mssql",      "displayName": "SQL Server"},
         {"code": 6, "typeName": "clickhouse", "dialect": "ClickHouse","protocol": "clickhouse", "displayName": "ClickHouse"},
     ]}
+
+
+# ===== 逻辑外键 (Logical Relations) =====
+# 对齐 Java DatasourceController 的 logicalRelations 部分
+
+@router.get("/{datasource_id}/logical-relations", summary="获取数据源的逻辑外键列表")
+async def list_logical_relations(datasource_id: int, db: AsyncSession = Depends(get_db)):
+    """获取指定数据源的所有逻辑外键关系 — GET /api/datasource/{id}/logical-relations"""
+    datasource = await DatasourceService.get_datasource(db, datasource_id)
+    if not datasource:
+        raise HTTPException(status_code=404, detail="Datasource not found")
+    items = await LogicalRelationService.list_by_datasource(db, datasource_id)
+    return {"success": True, "message": "操作成功", "data": [item.model_dump(by_alias=True) for item in items]}
+
+
+@router.post("/{datasource_id}/logical-relations", status_code=201, summary="创建逻辑外键")
+async def create_logical_relation(datasource_id: int, dto: LogicalRelationCreate, db: AsyncSession = Depends(get_db)):
+    """创建逻辑外键关系 — POST /api/datasource/{id}/logical-relations"""
+    datasource = await DatasourceService.get_datasource(db, datasource_id)
+    if not datasource:
+        raise HTTPException(status_code=404, detail="Datasource not found")
+    item = await LogicalRelationService.create(db, datasource_id, dto)
+    return {"success": True, "message": "创建成功", "data": item.model_dump(by_alias=True)}
+
+
+@router.put("/{datasource_id}/logical-relations/{relation_id}", summary="更新逻辑外键")
+async def update_logical_relation(datasource_id: int, relation_id: int, dto: LogicalRelationUpdate, db: AsyncSession = Depends(get_db)):
+    """更新逻辑外键关系 — PUT /api/datasource/{id}/logical-relations/{relationId}"""
+    datasource = await DatasourceService.get_datasource(db, datasource_id)
+    if not datasource:
+        raise HTTPException(status_code=404, detail="Datasource not found")
+    item = await LogicalRelationService.update(db, relation_id, dto)
+    if not item:
+        raise HTTPException(status_code=404, detail="Logical relation not found")
+    return {"success": True, "message": "更新成功", "data": item.model_dump(by_alias=True)}
+
+
+@router.delete("/{datasource_id}/logical-relations/{relation_id}", summary="删除逻辑外键")
+async def delete_logical_relation(datasource_id: int, relation_id: int, db: AsyncSession = Depends(get_db)):
+    """软删除逻辑外键关系 — DELETE /api/datasource/{id}/logical-relations/{relationId}"""
+    datasource = await DatasourceService.get_datasource(db, datasource_id)
+    if not datasource:
+        raise HTTPException(status_code=404, detail="Datasource not found")
+    deleted = await LogicalRelationService.delete(db, relation_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Logical relation not found")
+    return {"success": True, "message": "删除成功", "data": None}
+
+
+@router.put("/{datasource_id}/logical-relations", summary="批量保存逻辑外键")
+async def batch_save_logical_relations(datasource_id: int, relations: list[LogicalRelationCreate], db: AsyncSession = Depends(get_db)):
+    """批量替换数据源的所有逻辑外键 — PUT /api/datasource/{id}/logical-relations (batch)"""
+    datasource = await DatasourceService.get_datasource(db, datasource_id)
+    if not datasource:
+        raise HTTPException(status_code=404, detail="Datasource not found")
+    items = await LogicalRelationService.batch_save(db, datasource_id, relations)
+    return {"success": True, "message": "批量保存成功", "data": [item.model_dump(by_alias=True) for item in items]}
 
 
 @router.get("/{datasource_id}", response_model=DatasourceResponse, summary="获取数据源详情")
