@@ -2,7 +2,7 @@
 AgentDatasource Pydantic Schemas — camelCase 对齐前端 AgentDatasource 接口
 """
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Union
 from pydantic import BaseModel, Field, ConfigDict
 from .datasource import DatasourceResponse
 
@@ -21,22 +21,25 @@ class ToggleDatasourceRequest(BaseModel):
 
 
 class TableInfo(BaseModel):
-    """表信息 — name 为表名，comment 为注释"""
+    """表信息 — 前端可能发 {name, comment} 对象"""
     name: str
     comment: str = ""
 
 
 class UpdateDatasourceTablesRequest(BaseModel):
     """更新选中的数据表 — 对齐 Java UpdateDatasourceTablesDTO
-    前端发送 tables: [{name, comment}]，后端提取 name 字段
+
+    兼容前端两种格式:
+      - 字符串: ["order_info", "patient"]
+      - 对象:   [{"name": "order_info", "comment": ""}, ...]
     """
     datasource_id: int = Field(..., alias="datasourceId")
-    tables: list[TableInfo] = Field(default_factory=list, alias="tables")
+    tables: list[Union[str, TableInfo]] = Field(default_factory=list)
 
     model_config = ConfigDict(populate_by_name=True)
 
     def get_table_names(self) -> list[str]:
-        return [t.name for t in self.tables]
+        return [t if isinstance(t, str) else t.name for t in self.tables]
 
 
 class AgentDatasourceResponse(BaseModel):
