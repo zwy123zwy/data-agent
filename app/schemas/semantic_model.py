@@ -20,8 +20,11 @@ class SemanticModelBase(BaseModel):
 
 
 class SemanticModelCreate(SemanticModelBase):
-    """创建语义模型请求"""
-    datasource_id: int = Field(..., description="数据源ID")
+    """创建语义模型请求 — 对齐 Java SemanticModelAddDTO"""
+    agent_id: int = Field(..., alias="agentId", description="智能体ID")
+    datasource_id: Optional[int] = Field(None, description="数据源ID")
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class SemanticModelUpdate(BaseModel):
@@ -56,3 +59,39 @@ class SemanticModelSearchRequest(BaseModel):
     query: str = Field(..., description="搜索查询（业务名称或同义词）")
     datasource_id: Optional[int] = Field(None, description="过滤数据源ID")
     table_name: Optional[str] = Field(None, description="过滤表名")
+
+
+# ================================================================
+# Batch Import — 对齐 Java SemanticModelBatchImportDTO / SemanticModelImportItem
+# ================================================================
+
+class SemanticModelImportItem(BaseModel):
+    """单条导入项 — 对齐 Java SemanticModelImportItem"""
+    table_name: str = Field(..., alias="tableName", description="表名")
+    column_name: str = Field(..., alias="columnName", description="字段名")
+    business_name: str = Field(..., alias="businessName", description="业务名称")
+    data_type: str = Field(..., alias="dataType", description="数据类型")
+    synonyms: Optional[str] = Field(None, description="同义词")
+    business_description: Optional[str] = Field(None, alias="businessDescription", description="业务描述")
+    column_comment: Optional[str] = Field(None, alias="columnComment", description="字段注释")
+    create_time: Optional[datetime] = Field(None, alias="createTime", description="创建时间")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class SemanticModelBatchImportDTO(BaseModel):
+    """批量导入请求 — 对齐 Java SemanticModelBatchImportDTO"""
+    agent_id: int = Field(..., alias="agentId", description="智能体ID")
+    items: list[SemanticModelImportItem] = Field(..., min_length=1, description="导入数据")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class BatchImportResult(BaseModel):
+    """批量导入结果 — 对齐 Java BatchImportResult"""
+    total: int = 0
+    success_count: int = Field(0, alias="successCount")
+    fail_count: int = Field(0, alias="failCount")
+    errors: list[str] = Field(default_factory=list)
+
+    model_config = ConfigDict(populate_by_name=True)

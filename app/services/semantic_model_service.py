@@ -6,7 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
 from typing import List, Optional
 from ..models.semantic_model import SemanticModel
-from ..schemas.semantic_model import SemanticModelCreate, SemanticModelUpdate, SemanticModelSearchRequest
+from ..schemas.semantic_model import (
+    SemanticModelCreate, SemanticModelUpdate, SemanticModelSearchRequest,
+    SemanticModelImportItem, BatchImportResult,
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -189,6 +192,140 @@ class SemanticModelService:
 
         logger.info(f"Search returned {len(matched_models)} semantic models for agent {agent_id}")
         return matched_models
+
+    # ================================================================
+    # Java-aligned methods (SemanticModelController)
+    # ================================================================
+
+    @staticmethod
+    async def get_all(db: AsyncSession) -> list[SemanticModel]:
+        """获取所有语义模型 — 对齐 Java getAll()"""
+        result = await db.execute(
+            select(SemanticModel).order_by(SemanticModel.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def get_by_agent_id(db: AsyncSession, agent_id: int) -> list[SemanticModel]:
+        """按 Agent ID 查询 — 对齐 Java getByAgentId()"""
+        result = await db.execute(
+            select(SemanticModel)
+            .where(SemanticModel.agent_id == agent_id)
+            .order_by(SemanticModel.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def search_by_keyword(db: AsyncSession, keyword: str) -> list[SemanticModel]:
+        """关键词搜索 — 对齐 Java search()"""
+        keyword_lower = keyword.lower()
+        result = await db.execute(
+            select(SemanticModel).order_by(SemanticModel.created_at.desc())
+        )
+        models = result.scalars().all()
+        return [
+            m for m in models
+            if keyword_lower in (m.business_name or "").lower()
+            or keyword_lower in (m.business_description or "").lower()
+            or keyword_lower in (m.synonyms or "").lower()
+            or keyword_lower in (m.table_name or "").lower()
+            or keyword_lower in (m.column_name or "").lower()
+        ]
+
+    @staticmethod
+    async def delete_batch(db: AsyncSession, ids: list[int]) -> None:
+        """批量删除 — 对齐 Java batchDelete()"""
+        if not ids:
+            return
+        from sqlalchemy import delete
+        await db.execute(delete(SemanticModel).where(SemanticModel.id.in_(ids)))
+        await db.commit()
+        logger.info(f"Batch deleted {len(ids)} semantic models")
+
+    @staticmethod
+    async def enable_batch(db: AsyncSession, ids: list[int]) -> None:
+        """批量启用 — 对齐 Java enableFields()"""
+        if not ids:
+            return
+        from sqlalchemy import update
+        await db.execute(
+            update(SemanticModel).where(SemanticModel.id.in_(ids)).values(status=1)
+        )
+        await db.commit()
+        logger.info(f"Batch enabled {len(ids)} semantic models")
+
+    @staticmethod
+    async def disable_batch(db: AsyncSession, ids: list[int]) -> None:
+        """批量禁用 — 对齐 Java disableFields()"""
+        if not ids:
+            return
+        from sqlalchemy import update
+        await db.execute(
+            update(SemanticModel).where(SemanticModel.id.in_(ids)).values(status=0)
+        )
+        await db.commit()
+        logger.info(f"Batch disabled {len(ids)} semantic models")
+
+    @staticmethod
+    async def batch_import(
+        db: AsyncSession, agent_id: int, items: list[SemanticModelImportItem]
+    ) -> BatchImportResult:
+        """批量导入 (JSON) — 对齐 Java batchImport()"""
+        result = BatchImportResult(total=len(items))
+        for item in items:
+            try:
+                model = SemanticModel(
+                    agent_id=agent_id,
+                    datasource_id=0,  # 导入时不强制 datasource_id
+                    table_name=item.table_name,
+                    column_name=item.column_name,
+                    business_name=item.business_name,
+                    business_description=item.business_description,
+                    synonyms=item.synonyms,
+                    column_comment=item.column_comment,
+                    data_type=item.data_type,
+                    status=1,
+                )
+                db.add(model)
+                result.success_count += 1
+            except Exception as e:
+                result.fail_count += 1
+                result.errors.append(f"{item.table_name}.{item.column_name}: {e}")
+        await db.commit()
+        logger.info(f"Batch import: total={result.total}, success={result.success_count}, fail={result.fail_count}")
+        return result
+
+    @staticmethod
+    async def import_from_excel(
+        db: AsyncSession, file_content: bytes, filename: str, agent_id: int
+    ) -> BatchImportResult:
+        """从 Excel 文件导入 — 对齐 Java importExcel()"""
+        try:
+            import openpyxl
+            from io import BytesIO
+        except ImportError:
+            raise ValueError("需要安装 openpyxl 库: pip install openpyxl")
+
+        wb = openpyxl.load_workbook(BytesIO(file_content), read_only=True)
+        ws = wb.active
+        rows = list(ws.iter_rows(min_row=2, values_only=True))  # skip header
+        wb.close()
+
+        items = []
+        for row in rows:
+            if not row or not row[0]:
+                continue
+            items.append(SemanticModelImportItem(
+                table_name=str(row[0] or ""),
+                column_name=str(row[1] or ""),
+                business_name=str(row[2] or ""),
+                data_type=str(row[3] or ""),
+                synonyms=str(row[4]) if len(row) > 4 and row[4] else None,
+                business_description=str(row[5]) if len(row) > 5 and row[5] else None,
+                column_comment=str(row[6]) if len(row) > 6 and row[6] else None,
+            ))
+
+        return await SemanticModelService.batch_import(db, agent_id, items)
 
     @staticmethod
     async def get_table_semantic_info(
