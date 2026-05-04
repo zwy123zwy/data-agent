@@ -20,12 +20,23 @@ class ToggleDatasourceRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+class TableInfo(BaseModel):
+    """表信息 — name 为表名，comment 为注释"""
+    name: str
+    comment: str = ""
+
+
 class UpdateDatasourceTablesRequest(BaseModel):
-    """更新选中的数据表 — 对齐 Java UpdateDatasourceTablesDTO"""
+    """更新选中的数据表 — 对齐 Java UpdateDatasourceTablesDTO
+    前端发送 tables: [{name, comment}]，后端提取 name 字段
+    """
     datasource_id: int = Field(..., alias="datasourceId")
-    tables: list[str] = Field(default_factory=list)
+    tables: list[TableInfo] = Field(default_factory=list, alias="tables")
 
     model_config = ConfigDict(populate_by_name=True)
+
+    def get_table_names(self) -> list[str]:
+        return [t.name for t in self.tables]
 
 
 class AgentDatasourceResponse(BaseModel):

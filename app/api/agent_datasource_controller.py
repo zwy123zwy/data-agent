@@ -24,8 +24,10 @@ router = APIRouter(prefix="/api/agent", tags=["Agent-Datasource关联"])
 async def list_agent_datasources(
     agent_id: int,
     db: AsyncSession = Depends(get_db),
-):
-    """列出 Agent 的所有数据源 — 对齐 Java GET /{agentId}/datasources"""
+) -> dict:
+    """列出 Agent 的所有数据源，返回 {success, message, data: [AgentDatasourceResponse]}
+    对齐 Java GET /{agentId}/datasources
+    """
     try:
         items = await AgentDatasourceService.list_agent_datasources(db, agent_id)
         return {
@@ -85,10 +87,13 @@ async def update_datasource_tables(
     dto: UpdateDatasourceTablesRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """更新 Agent 数据源选中的表 — 对齐 Java POST /{agentId}/datasources/tables"""
+    """更新 Agent 数据源选中的表 — 对齐 Java POST /{agentId}/datasources/tables
+    前端发送 tables: [{name, comment}]，提取 name 字段存储
+    """
     try:
+        table_names = dto.get_table_names()
         await AgentDatasourceService.update_datasource_tables(
-            db, agent_id, dto.datasource_id, dto.tables
+            db, agent_id, dto.datasource_id, table_names
         )
         return {"success": True, "message": "更新成功", "data": None}
     except ValueError as e:
@@ -132,28 +137,3 @@ async def unbind_datasource(
     if not success:
         raise HTTPException(status_code=404, detail="Agent-Datasource binding not found")
     return {"success": True, "message": "数据源已移除"}
-
-
-@router.post("/{agent_id}/datasources/{datasource_id}/activate", summary="激活数据源")
-async def activate_datasource(
-    agent_id: int,
-    datasource_id: int,
-    db: AsyncSession = Depends(get_db),
-):
-    """激活 Agent 的指定数据源 — 保留兼容，推荐使用 PUT /toggle"""
-    try:
-        agent_ds = await AgentDatasourceService.activate_datasource(
-            db, agent_id, datasource_id
-        )
-        resp = AgentDatasourceResponse(
-            id=agent_ds.id,
-            agent_id=agent_ds.agent_id,
-            datasource_id=agent_ds.datasource_id,
-            is_active=bool(agent_ds.is_active),
-            created_at=agent_ds.created_at,
-            updated_at=getattr(agent_ds, "updated_at", None),
-            select_tables=[],
-        ).model_dump(by_alias=True)
-        return {"success": True, "message": "数据源已启用", "data": resp}
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
