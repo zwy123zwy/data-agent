@@ -17,6 +17,8 @@ from . import (
     chat_controller,
     agent_preset_question_controller,
     prompt_config_controller,
+    business_knowledge_controller,
+    upload_controller,
 )
 
 __all__ = [
@@ -34,4 +36,6 @@ __all__ = [
     "chat_controller",
     "agent_preset_question_controller",
     "prompt_config_controller",
+    "business_knowledge_controller",
+    "upload_controller",
 ]

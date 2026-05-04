@@ -12,10 +12,11 @@ from .chat_session import ChatSession
 from .chat_message import ChatMessage
 from .agent_datasource_tables import AgentDatasourceTables
 from .prompt_config import PromptConfig
+from .business_knowledge import BusinessKnowledge
 
 __all__ = [
     "Agent", "Datasource", "AgentDatasource", "Knowledge", "SemanticModel",
     "QueryPlan", "ModelConfig", "HumanFeedback",
     "LogicalRelation", "AgentPresetQuestion", "ChatSession", "ChatMessage",
-    "AgentDatasourceTables", "PromptConfig",
+    "AgentDatasourceTables", "PromptConfig", "BusinessKnowledge",
 ]

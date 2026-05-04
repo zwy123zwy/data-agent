@@ -7,7 +7,7 @@
 #  HTTP 请求 (前端/浏览器)
 #       │
 #       ▼
-#  FastAPI app (当前文件)  ←── 注册了 13 个 Controller + 全局中间件
+#  FastAPI app (当前文件)  ←── 注册了 16 个 Controller + 全局中间件
 #       │
 #       ├── middleware ──►  CORS (跨域)  ──►  ApiResponseMiddleware (响应包装)
 #       │
@@ -58,6 +58,8 @@ from .api import (
     chat_controller,                     # 会话历史 (ChatSession/ChatMessage)
     agent_preset_question_controller,    # Agent 预设问题
     prompt_config_controller,            # Prompt 自定义配置
+    business_knowledge_controller,       # 业务知识
+    upload_controller,                   # 文件上传/下载
 )
 
 
@@ -69,7 +71,7 @@ async def lifespan(app: FastAPI):
       1. init_db() → 连接 MySQL，自动创建缺失的数据表
       2. 注册全局异常处理器
       3. 注册中间件 (CORS → ApiResponse 包装)
-      4. 注册 13 个 Controller 路由
+      4. 注册 16 个 Controller 路由
       5. 开始接受 HTTP 请求
     """
     await init_db()
@@ -130,6 +132,8 @@ app.include_router(feedback_controller.router)
 app.include_router(chat_controller.router)
 app.include_router(agent_preset_question_controller.router)
 app.include_router(prompt_config_controller.router)
+app.include_router(business_knowledge_controller.router)
+app.include_router(upload_controller.router)
 
 
 @app.get("/", tags=["健康检查"])
