@@ -14,7 +14,7 @@ class AgentPresetQuestionResponse(BaseModel):
     agent_id: int
     question: str
     sort_order: int = 0
-    is_active: bool = False
+    is_active: int = 0
     create_time: datetime
     update_time: datetime
 

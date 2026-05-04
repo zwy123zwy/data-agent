@@ -36,7 +36,7 @@ class AgentPresetQuestionService:
                 agent_id=agent_id,
                 question=data.get("question", ""),
                 sort_order=data.get("sort_order", i),
-                is_active=data.get("is_active", True),
+                is_active=data.get("is_active", 1),
             )
             db.add(question)
             saved.append(question)
