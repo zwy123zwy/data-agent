@@ -44,14 +44,17 @@ async def get_active_datasource(
     agent_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """获取 Agent 当前激活的数据源 — 对齐 Java GET /{agentId}/datasources/active"""
-    ds = await AgentDatasourceService.get_active_datasource(db, agent_id)
-    if not ds:
+    """获取 Agent 当前激活的数据源 — 对齐 Java GET /{agentId}/datasources/active
+    返回 AgentDatasourceResponse (含 datasource + selectTables)，而非裸 Datasource。
+    """
+    items = await AgentDatasourceService.list_agent_datasources(db, agent_id)
+    active = next((item for item in items if item.is_active == 1), None)  # type: ignore
+    if not active:
         raise HTTPException(status_code=404, detail="No active datasource found for this Agent")
     return {
         "success": True,
         "message": "操作成功",
-        "data": DatasourceResponse.model_validate(ds).model_dump(by_alias=True),
+        "data": active.model_dump(by_alias=True),
     }
 
 
@@ -70,7 +73,7 @@ async def toggle_datasource(
             id=agent_ds.id,
             agent_id=agent_ds.agent_id,
             datasource_id=agent_ds.datasource_id,
-            is_active=bool(agent_ds.is_active),
+            is_active=int(agent_ds.is_active or 0),
             created_at=agent_ds.created_at,
             updated_at=getattr(agent_ds, "updated_at", None),
             select_tables=[],
@@ -136,7 +139,7 @@ async def bind_datasource(
             id=agent_ds.id,
             agent_id=agent_ds.agent_id,
             datasource_id=agent_ds.datasource_id,
-            is_active=bool(agent_ds.is_active),
+            is_active=int(agent_ds.is_active or 0),
             created_at=agent_ds.created_at,
             updated_at=getattr(agent_ds, "updated_at", None),
             select_tables=[],

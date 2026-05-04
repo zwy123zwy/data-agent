@@ -46,11 +46,12 @@ class AgentDatasourceResponse(BaseModel):
     """Agent-Datasource 关联响应 — 对齐前端 AgentDatasource 接口全部 8 个字段
 
     Python 字段名使用 ORM 属性名 (created_at/updated_at)，通过 alias 输出 camelCase。
+    isActive 输出 int (0/1) 对齐 Java Integer 类型。
     """
     id: int
     agent_id: int = Field(..., alias="agentId")
     datasource_id: int = Field(..., alias="datasourceId")
-    is_active: bool = Field(..., alias="isActive")
+    is_active: int = Field(..., alias="isActive", description="0=禁用, 1=启用")
     created_at: Optional[datetime] = Field(None, alias="createTime")
     updated_at: Optional[datetime] = Field(None, alias="updateTime")
     datasource: Optional[DatasourceResponse] = None
