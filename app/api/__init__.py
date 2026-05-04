@@ -19,6 +19,7 @@ from . import (
     prompt_config_controller,
     business_knowledge_controller,
     upload_controller,
+    echo_controller,
 )
 
 __all__ = [
@@ -38,4 +39,5 @@ __all__ = [
     "prompt_config_controller",
     "business_knowledge_controller",
     "upload_controller",
+    "echo_controller",
 ]

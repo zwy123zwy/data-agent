@@ -60,6 +60,7 @@ from .api import (
     prompt_config_controller,            # Prompt 自定义配置
     business_knowledge_controller,       # 业务知识
     upload_controller,                   # 文件上传/下载
+    echo_controller,                     # 心跳检测
 )
 
 
@@ -134,6 +135,7 @@ app.include_router(agent_preset_question_controller.router)
 app.include_router(prompt_config_controller.router)
 app.include_router(business_knowledge_controller.router)
 app.include_router(upload_controller.router)
+app.include_router(echo_controller.router)
 
 
 @app.get("/", tags=["健康检查"])
