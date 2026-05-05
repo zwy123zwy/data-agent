@@ -65,3 +65,16 @@ evaluation/reports/
 
 # Evaluation test databases (generated)
 evaluation/databases/
+
+# Claude Code local settings (personal config)
+.claude/settings.local.json
+
+# Generated diagrams
+docs/*.svg
+
+# Generated workflow docs
+docs/WORKFLOW_FLOW_DIAGRAM.md
+docs/WORKFLOW_MERMAID.md
+
+# Docker Compose overrides (personal)
+docker-compose.override.yml
