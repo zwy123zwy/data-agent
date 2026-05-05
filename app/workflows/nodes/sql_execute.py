@@ -35,11 +35,14 @@ def _build_connection_url(datasource) -> str:
 
 def _serialize_row(row, columns) -> Dict[str, Any]:
     """将数据库行序列化为 JSON 兼容的 dict"""
+    from decimal import Decimal
     result = {}
     for i, col in enumerate(columns):
         val = row[i]
         if hasattr(val, 'isoformat'):
             val = val.isoformat()
+        elif isinstance(val, Decimal):
+            val = float(val)
         elif isinstance(val, (bytes, bytearray)):
             val = str(val)
         elif isinstance(val, (set, frozenset)):
@@ -117,13 +120,17 @@ async def sql_execute_node(state: WorkflowState) -> Dict[str, Any]:
                         "columns": columns,
                     }
 
-                    return {
+                    result = {
                         "sql_result": sql_result,
                         "sql_result_list_memory": result_list,
                         "sql_step_results": step_results,
                         "sql_error": None,
-                        "query_plan": json.dumps(plan, ensure_ascii=False) if plan else None,
+                        "plan_current_step": current_step + 1,  # 当前步骤完成，递增
                     }
+                    # 仅在 plan 被修改后才回写，避免覆盖为 None
+                    if plan:
+                        result["query_plan"] = json.dumps(plan, ensure_ascii=False)
+                    return result
 
             finally:
                 await temp_engine.dispose()

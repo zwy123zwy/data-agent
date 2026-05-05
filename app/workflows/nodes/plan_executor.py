@@ -179,6 +179,9 @@ async def plan_executor_node(state: WorkflowState) -> Dict[str, Any]:
     tool_to_use = type_map.get(tool_to_use, tool_to_use)
 
     logger.info(f"[PlanExecutor] Step {current_step}/{total_steps} → {tool_to_use}")
+    # 注: plan_current_step 由各流水线的末端节点递增
+    #   - SQL 流水线: sql_execute_node 递增
+    #   - Python 流水线: python_analyze_node 递增
     return {
         "plan_next_node": tool_to_use,
         "plan_validation_status": True,

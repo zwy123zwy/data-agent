@@ -40,7 +40,7 @@ async def _generate_and_persist(session_id: str, agent_id: int, user_message: st
 
     try:
         # 检查会话是否需要生成标题
-        from ..core.database import async_session_factory
+        from ..core.database import async_session_maker as async_session_factory
 
         async with async_session_factory() as db:
             session = await chat_service.get_session(db, session_id)

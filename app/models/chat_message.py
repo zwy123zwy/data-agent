@@ -18,7 +18,7 @@ class ChatMessage(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False, comment="消息内容")
     message_type: Mapped[str] = mapped_column(
         String(50), default="text",
-        comment="消息类型: text/sql/result/error"
+        comment="消息类型: text/sql/result/error/html/result-set/html-report/markdown-report/json/python"
     )
     metadata_: Mapped[Optional[dict]] = mapped_column("metadata", JSON, comment="元数据（JSON格式）")
     create_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, comment="创建时间")

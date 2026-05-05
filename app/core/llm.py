@@ -33,8 +33,13 @@ from typing import Optional, AsyncIterator
 from openai import AsyncOpenAI
 from .config import settings
 import logging
+import time
+import inspect
 
 logger = logging.getLogger(__name__)
+
+# 全局 LLM 调用计数器
+_llm_call_counter = 0
 
 
 class LLMService:
@@ -71,15 +76,69 @@ class LLMService:
         Returns:
             LLM 完整响应内容
         """
-        response = await self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=temperature if temperature is not None else self.temperature,
+        global _llm_call_counter
+        _llm_call_counter += 1
+        call_id = _llm_call_counter
+
+        # 自动推断调用者
+        caller = "unknown"
+        for frame in inspect.stack():
+            mod = frame.frame.f_globals.get("__name__", "")
+            if "workflows.nodes" in mod or "services" in mod or "core" in mod:
+                caller = mod
+                break
+
+        temp = temperature if temperature is not None else self.temperature
+        input_preview = user_prompt[:200].replace("\n", "\\n")
+
+        logger.info(
+            "[LLM #%d] >>> CALL model=%s caller=%s temp=%.2f input_len=%d",
+            call_id, self.model, caller, temp, len(user_prompt)
         )
-        return response.choices[0].message.content
+        logger.debug("[LLM #%d] >>> INPUT: %s...", call_id, input_preview)
+
+        t_start = time.time()
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=temp,
+            )
+        except Exception:
+            elapsed = time.time() - t_start
+            logger.error(
+                "[LLM #%d] <<< ERROR model=%s caller=%s elapsed=%.2fs",
+                call_id, self.model, caller, elapsed
+            )
+            raise
+
+        elapsed = time.time() - t_start
+        content = response.choices[0].message.content
+
+        # Token usage
+        usage = response.usage
+        if usage:
+            logger.info(
+                "[LLM #%d] <<< DONE model=%s caller=%s elapsed=%.2fs "
+                "output_len=%d input_tokens=%d output_tokens=%d total_tokens=%d",
+                call_id, self.model, caller, elapsed,
+                len(content) if content else 0,
+                usage.prompt_tokens, usage.completion_tokens, usage.total_tokens
+            )
+        else:
+            logger.info(
+                "[LLM #%d] <<< DONE model=%s caller=%s elapsed=%.2fs output_len=%d",
+                call_id, self.model, caller, elapsed,
+                len(content) if content else 0
+            )
+
+        output_preview = (content or "")[:300].replace("\n", "\\n")
+        logger.debug("[LLM #%d] <<< OUTPUT: %s...", call_id, output_preview)
+
+        return content
 
     async def chat_stream(
         self,
@@ -97,6 +156,26 @@ class LLMService:
         Yields:
             流式响应片段
         """
+        global _llm_call_counter
+        _llm_call_counter += 1
+        call_id = _llm_call_counter
+
+        caller = "unknown"
+        for frame in inspect.stack():
+            mod = frame.frame.f_globals.get("__name__", "")
+            if "workflows.nodes" in mod or "services" in mod or "core" in mod:
+                caller = mod
+                break
+
+        temp = temperature if temperature is not None else self.temperature
+
+        logger.info(
+            "[LLM #%d] >>> STREAM model=%s caller=%s temp=%.2f input_len=%d",
+            call_id, self.model, caller, temp, len(user_prompt)
+        )
+
+        t_start = time.time()
+        total_content = []
         try:
             stream = await self.client.chat.completions.create(
                 model=self.model,
@@ -104,17 +183,22 @@ class LLMService:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=temperature if temperature is not None else self.temperature,
+                temperature=temp,
                 stream=True,
             )
 
             async for chunk in stream:
                 if chunk.choices[0].delta.content:
+                    total_content.append(chunk.choices[0].delta.content)
                     yield chunk.choices[0].delta.content
 
-        except Exception as e:
-            logger.error(f"Streaming error: {e}")
-            raise
+        finally:
+            elapsed = time.time() - t_start
+            total = "".join(total_content)
+            logger.info(
+                "[LLM #%d] <<< STREAM_DONE model=%s caller=%s elapsed=%.2fs output_len=%d",
+                call_id, self.model, caller, elapsed, len(total)
+            )
 
 
 # 全局 LLM 服务实例

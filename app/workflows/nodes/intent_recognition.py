@@ -43,7 +43,7 @@ async def intent_recognition_node(state: WorkflowState) -> WorkflowState:
     意图识别节点 — 工作流入口
 
     读取:  state["user_query"]
-    写入:  state["intent"]
+    写入:  state["intent"], state["classification"]
     调用:  llm_service.chat() → LLM 意图分类
     """
     user_query = state["user_query"]
@@ -58,9 +58,13 @@ async def intent_recognition_node(state: WorkflowState) -> WorkflowState:
             intent = "chitchat"
 
         state["intent"] = intent
+        # 对齐 Java IntentRecognitionOutputDTO.classification
+        state["classification"] = "可能的数据分析请求" if intent == "data_analysis" else "闲聊或无关指令"
 
     except Exception as e:
-        state["error"] = f"Intent recognition failed: {str(e)}"
+        # LLM 调用失败时不要静默降级，让调用方看到具体错误
+        state["error"] = f"LLM 意图识别失败 (请检查 API Key 是否有效): {str(e)}"
         state["intent"] = "chitchat"
+        state["classification"] = "闲聊或无关指令"
 
     return state

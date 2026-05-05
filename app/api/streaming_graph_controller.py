@@ -5,50 +5,21 @@
   这是整个后端最重要的 API 文件。前端的所有数据分析请求都通过这里的
   SSE (Server-Sent Events) 端点进入，驱动 LangGraph 工作流执行。
 
-【模块连接】
-  上游 (前端 → 本文件):
-    - 前端 Vue 应用 → GET /api/stream/search?agentId=&query=...
-    - 前端 Vue 应用 → POST /api/query/stream (JSON body)
+【Java 对应】
+  streaming_graph_controller.py ≈ GraphController.java + GraphServiceImpl.java (合一)
 
-  本文件 → 中层:
-    - compiled_workflow.astream()         → 异步遍历 LangGraph 工作流
-    - AgentService.get_agent()            → 验证 Agent 是否存在
-    - AgentDatasourceService.get_active_datasource() → 验证数据源
+【SSE 格式 — 对齐 Java ServerSentEvent<GraphNodeResponse>】
+  Java 后端使用 Spring Flux<ServerSentEvent<GraphNodeResponse>> 发送 SSE:
+    - 所有数据消息: plain SSE data: (无 event: 前缀) → 前端 EventSource.onmessage 接收
+    - 完成事件: event: complete → 前端 addEventListener('complete', ...)
+    - 错误事件: event: error
 
-  本文件 → 下游 (前端):
-    - SSE event stream → text/event-stream 格式
-    - 事件类型: start, intent, knowledge, rewrite, schema, plan, sql, ...
+  GraphNodeResponse 结构:
+    {agentId, threadId, nodeName, textType, text, error, complete}
 
-  Java 对应:
-    streaming_graph_controller.py ≈ GraphController.java + GraphServiceImpl.java (合一)
-
-【SSE 事件流说明】
-  前端通过 EventSource API 监听以下事件:
-
-  event: start      → 开始处理
-  event: intent     → 意图识别结果 (data_analysis / chitchat)
-  event: knowledge  → 知识召回结果
-  event: rewrite    → 查询改写结果
-  event: schema     → Schema 召回完成
-  event: table_relation → 表关系构建完成
-  event: feasibility → 可行性评估结果
-  event: plan       → 执行计划 (textType: JSON)
-  event: plan_step  → 当前执行步骤
-  event: sql        → 生成的 SQL (textType: SQL)
-  event: semantic_check → 语义校验结果
-  event: sql_result → SQL 执行结果 (textType: JSON)
-  event: sql_error  → SQL 执行错误
-  event: python_code → Python 代码 (textType: Python)
-  event: python_execute → Python 执行结果
-  event: python_analysis → Python 分析结论
-  event: report     → 最终报告 (textType: Markdown)
-  event: paused     → 暂停等待人工反馈
-  event: done       → 处理完成
-  event: error      → 错误信息
-
-  每个事件包含 textType 字段 (SQL/JSON/HTML/Markdown/Python)，
-  前端根据 textType 选择不同的渲染组件。
+  TextType 枚举值: SQL, JSON, HTML, MARK_DOWN, RESULT_SET, PYTHON, TEXT
 """
+
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -60,19 +31,84 @@ from ..workflows.state import WorkflowState
 from ..services.agent_service import AgentService
 from ..services.agent_datasource_service import AgentDatasourceService
 from ..services.semantic_model_service import SemanticModelService
+from ..services.node_metrics import NodeMetricsTracker
+import asyncio
 import json
 import logging
+import uuid
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["流式查询"])
 
-# TextType 标记 — 对齐 Java TextType 枚举
+# ============================================================================
+# Python → Java 节点名映射
+# 前端通过 nodeName 分组展示消息块，更换 nodeName 时创建新的消息块
+# Java 节点名来自 Constant.java 的 *_NODE 常量，但 Spring AI output.node()
+# 返回的是类简单名称（如 ReportGeneratorNode），前端根据此值做特殊处理
+# ============================================================================
+NODE_NAME_MAP = {
+    "intent_recognition": "IntentRecognitionNode",
+    "knowledge_recall": "EvidenceRecallNode",
+    "query_rewrite": "QueryEnhanceNode",
+    "schema_recall": "SchemaRecallNode",
+    "table_relation": "TableRelationNode",
+    "feasibility": "FeasibilityAssessmentNode",
+    "planner": "PlannerNode",
+    "plan_executor": "PlanExecutorNode",
+    "sql_generate": "SqlGenerateNode",
+    "semantic_consistency": "SemanticConsistencyNode",
+    "sql_execute": "SqlExecuteNode",
+    "python_generate": "PythonGenerateNode",
+    "python_execute": "PythonExecuteNode",
+    "python_analyze": "PythonAnalyzeNode",
+    "report_generator": "ReportGeneratorNode",
+    "human_feedback": "HumanFeedbackNode",
+}
+
+# TextType 枚举 — 对齐 Java TextType enum 和前端 TextType enum
+# 前端定义: JSON='JSON', PYTHON='PYTHON', SQL='SQL', HTML='HTML',
+#           MARK_DOWN='MARK_DOWN', RESULT_SET='RESULT_SET', TEXT='TEXT'
 TEXT_TYPE_SQL = "SQL"
 TEXT_TYPE_JSON = "JSON"
 TEXT_TYPE_HTML = "HTML"
-TEXT_TYPE_MARKDOWN = "Markdown"
-TEXT_TYPE_PYTHON = "Python"
+TEXT_TYPE_MARK_DOWN = "MARK_DOWN"
+TEXT_TYPE_RESULT_SET = "RESULT_SET"
+TEXT_TYPE_PYTHON = "PYTHON"
+TEXT_TYPE_TEXT = "TEXT"
+
+
+def _build_graph_response(
+    agent_id: int,
+    thread_id: str,
+    node_name: str,
+    text: str,
+    text_type: str = "TEXT",
+    error: bool = False,
+    complete: bool = False,
+) -> dict:
+    """构建 GraphNodeResponse — 对齐 Java GraphNodeResponse.java"""
+    return {
+        "agentId": str(agent_id),
+        "threadId": thread_id or "",
+        "nodeName": node_name,
+        "textType": text_type,
+        "text": text or "",
+        "error": error,
+        "complete": complete,
+    }
+
+
+def _format_sse_data(data: dict) -> str:
+    """纯 data: 格式 (无 event: 前缀) — 前端 EventSource.onmessage 接收"""
+    payload = json.dumps(data, ensure_ascii=False)
+    return f"data: {payload}\n\n"
+
+
+def _format_sse_event(event: str, data: dict) -> str:
+    """命名 event: 格式 — 前端 addEventListener(event, ...) 接收"""
+    payload = json.dumps(data, ensure_ascii=False)
+    return f"event: {event}\ndata: {payload}\n\n"
 
 
 def _build_initial_state(
@@ -99,14 +135,6 @@ def _build_initial_state(
     }
 
 
-async def _create_sse_event(event: str, data: dict, text_type: str = None) -> str:
-    """创建 SSE 事件 — 对齐 Java SseEmitter / Flux"""
-    payload = json.dumps(data, ensure_ascii=False)
-    if text_type:
-        return f"event: {event}\ndata: {payload}\ntextType: {text_type}\n\n"
-    return f"event: {event}\ndata: {payload}\n\n"
-
-
 async def stream_workflow_execution(
     agent_id: int,
     user_query: str,
@@ -117,36 +145,39 @@ async def stream_workflow_execution(
     rejected_plan: bool = False,
     nl2sql_only: bool = False,
 ):
-    """流式执行工作流 — 对齐 Java GraphServiceImpl.streamQuery()
+    """流式执行工作流 — 对齐 Java GraphServiceImpl.graphStreamProcess()
 
-    Yields:
-        SSE 格式的事件流，包含 Token 级流式输出
+    SSE 格式对齐 Java:
+      - 每个节点输出 → 一条 data: GraphNodeResponse JSON (无 event: 前缀)
+      - 流程完成 → event: complete + GraphNodeResponse(complete=true)
+      - 流程错误 → event: error + GraphNodeResponse(error=true)
     """
-    config = {"configurable": {"thread_id": thread_id}} if thread_id else None
+    if not thread_id:
+        thread_id = str(uuid.uuid4())
+
+    config = {"configurable": {"thread_id": thread_id}}
 
     try:
-        # 发送开始事件
-        yield await _create_sse_event("start", {
-            "message": "开始处理查询",
-            "thread_id": thread_id,
-        })
-
         # 检查 Agent
         agent = await AgentService.get_agent(db, agent_id)
         if not agent:
-            yield await _create_sse_event("error", {"error": "Agent 不存在"})
+            yield _format_sse_event("error", _build_graph_response(
+                agent_id, thread_id, "", "Agent 不存在", TEXT_TYPE_TEXT, error=True
+            ))
             return
 
         # 检查数据源 — 获取激活的数据源及其 select_tables
         agent_ds_list = await AgentDatasourceService.list_agent_datasources(db, agent_id)
         active_agent_ds = next((item for item in agent_ds_list if item.is_active == 1), None)
         if not active_agent_ds:
-            yield await _create_sse_event("error", {"error": "没有激活的数据源"})
+            yield _format_sse_event("error", _build_graph_response(
+                agent_id, thread_id, "", "没有激活的数据源", TEXT_TYPE_TEXT, error=True
+            ))
             return
         datasource_id = active_agent_ds.datasource_id
         select_tables = active_agent_ds.select_tables
 
-        # 构建语义模型 Prompt — 将业务术语映射注入到工作流
+        # 构建语义模型 Prompt
         semantic_model_prompt = ""
         if select_tables:
             parts = []
@@ -175,177 +206,168 @@ async def stream_workflow_execution(
             resume_cmd = Command(
                 resume={"action": action, "reason": human_feedback_content},
             )
-            # 使用 Command 恢复 interrupt
             graph_input = resume_cmd
         else:
             graph_input = initial_state
 
-        # ===== 使用 astream_events 实现 Token 级流式 =====
-        node_events = {
-            "intent_recognition", "knowledge_recall", "query_rewrite",
-            "schema_recall", "table_relation", "feasibility", "planner",
-            "plan_executor", "sql_generate", "semantic_consistency",
-            "sql_execute", "python_generate", "python_execute",
-            "python_analyze", "report_generator", "human_feedback",
+        # ===== 使用 astream(stream_mode="updates")  =====
+        # Python 没有 Java 的 Token 级 StreamingOutput，每次 node 执行完毕
+        # 产生一个完整的 state update，我们将其映射为一条 GraphNodeResponse
+        # 只对用户可见的节点发送 SSE — 对齐 Java 版本行为
+        # Java 中仅部分节点返回 StreamingOutput (Flux)，其余节点只返回 state 更新
+        # 内部节点 (RAG、Schema、校验等) 不应暴露给前端
+        user_visible_nodes = {
+            "intent_recognition",
+            "sql_generate",
+            "sql_execute",
+            "python_generate",
+            "python_analyze",
+            "report_generator",
+            "human_feedback",
         }
+
+        # ===== 节点指标追踪 — 对齐 Java NodeMetrics =====
+        tracker = NodeMetricsTracker(thread_id, agent_id)
 
         async for event in compiled_workflow.astream(graph_input, config, stream_mode="updates"):
             for node_name, node_output in event.items():
-                if node_name not in node_events:
+                if node_output is None:
+                    logger.warning(f"[Stream] Node {node_name} returned None, skipping")
                     continue
 
                 logger.info(f"[Stream] Node: {node_name}")
+                m = tracker.start_node(NODE_NAME_MAP.get(node_name, node_name))
 
-                # ===== 意图识别 =====
+                if node_name not in user_visible_nodes:
+                    m.finish("success")
+                    m.log()
+                    continue
+                java_name = NODE_NAME_MAP.get(node_name, node_name)
+
+                # ===== 意图识别 — 对齐 Java IntentRecognitionNode 流式输出 =====
                 if node_name == "intent_recognition":
-                    intent = node_output.get("intent")
-                    yield await _create_sse_event("intent", {"intent": intent})
+                    intent = node_output.get("intent", "")
+                    classification = node_output.get("classification", "")
+                    # 对齐 Java: "正在进行意图识别..." + JSON + "\n意图识别完成！"
+                    json_part = json.dumps({"classification": classification}, ensure_ascii=False)
+                    if intent == "data_analysis":
+                        text = f"正在进行意图识别...{json_part}\n意图识别完成！"
+                    else:
+                        text = f"正在进行意图识别...{json_part}\n意图识别完成！"
+                    yield _format_sse_data(_build_graph_response(
+                        agent_id, thread_id, java_name, text, TEXT_TYPE_TEXT
+                    ))
+                    m.finish("success")
+                    m.log()
                     if intent != "data_analysis":
-                        yield await _create_sse_event("done", {"message": "闲聊模式，查询完成"})
+                        yield _format_sse_event("complete", _build_graph_response(
+                            agent_id, thread_id, "", "", TEXT_TYPE_TEXT, complete=True
+                        ))
+                        tracker.log_summary()
                         return
-
-                # ===== 知识召回 =====
-                elif node_name == "knowledge_recall":
-                    knowledge = node_output.get("recalled_knowledge", "")
-                    if knowledge:
-                        yield await _create_sse_event("knowledge", {
-                            "knowledge": knowledge[:500],
-                        })
-
-                # ===== 查询改写 =====
-                elif node_name == "query_rewrite":
-                    rewritten = node_output.get("rewritten_query")
-                    if rewritten:
-                        yield await _create_sse_event("rewrite", {
-                            "rewritten_query": rewritten,
-                        })
-
-                # ===== Schema 召回 =====
-                elif node_name == "schema_recall":
-                    yield await _create_sse_event("schema", {
-                        "message": "Schema 召回完成",
-                    })
-
-                # ===== 表关系 =====
-                elif node_name == "table_relation":
-                    schema_info = node_output.get("schema_info")
-                    if schema_info:
-                        tables_count = len(schema_info.get("tables", []))
-                        relations_count = len(schema_info.get("relations", []))
-                        yield await _create_sse_event("table_relation", {
-                            "tables": tables_count,
-                            "relations": relations_count,
-                            "message": f"发现 {tables_count} 个表, {relations_count} 个关系",
-                        })
-
-                # ===== 可行性评估 =====
-                elif node_name == "feasibility":
-                    result = node_output.get("feasibility_result", {})
-                    yield await _create_sse_event("feasibility", {
-                        "feasible": result.get("feasible", True),
-                        "reason": result.get("reason", ""),
-                    })
-
-                # ===== Planner =====
-                elif node_name == "planner":
-                    plan = node_output.get("query_plan")
-                    if plan:
-                        plan_str = plan if isinstance(plan, str) else json.dumps(plan, ensure_ascii=False)
-                        yield await _create_sse_event("plan", {
-                            "plan": plan_str,
-                        }, TEXT_TYPE_JSON)
-
-                # ===== PlanExecutor 调度 =====
-                elif node_name == "plan_executor":
-                    next_node = node_output.get("plan_next_node", "")
-                    current = node_output.get("plan_current_step", 1)
-                    yield await _create_sse_event("plan_step", {
-                        "next_node": next_node,
-                        "current_step": current,
-                    })
 
                 # ===== SQL 生成 =====
                 elif node_name == "sql_generate":
-                    sql = node_output.get("generated_sql")
+                    sql = node_output.get("generated_sql", "")
                     if sql:
-                        yield await _create_sse_event("sql", {
-                            "sql": sql,
-                        }, TEXT_TYPE_SQL)
-
-                # ===== 语义一致性校验 =====
-                elif node_name == "semantic_consistency":
-                    passed = node_output.get("semantic_consistency_result", True)
-                    yield await _create_sse_event("semantic_check", {
-                        "passed": passed,
-                    })
+                        yield _format_sse_data(_build_graph_response(
+                            agent_id, thread_id, java_name, sql, TEXT_TYPE_SQL
+                        ))
+                    m.finish("success")
+                    m.log()
 
                 # ===== SQL 执行 =====
                 elif node_name == "sql_execute":
                     error = node_output.get("sql_error")
                     result = node_output.get("sql_result")
+                    sql_status = "error" if error else "success"
                     if error:
-                        yield await _create_sse_event("sql_error", {"error": error})
+                        yield _format_sse_data(_build_graph_response(
+                            agent_id, thread_id, java_name, f"SQL 执行错误: {error}", TEXT_TYPE_TEXT
+                        ))
+                        m.error_type = "SqlExecuteError"
+                        m.error_message = error[:200]
                     elif result is not None:
-                        yield await _create_sse_event("sql_result", {
-                            "count": len(result),
-                            "columns": list(result[0].keys()) if result else [],
-                            "sample": result[:5] if result else [],
-                        }, TEXT_TYPE_JSON)
+                        text = json.dumps(result, ensure_ascii=False)
+                        yield _format_sse_data(_build_graph_response(
+                            agent_id, thread_id, java_name, text, TEXT_TYPE_RESULT_SET
+                        ))
+                    m.finish(sql_status)
+                    m.log()
 
                 # ===== Python 代码生成 =====
                 elif node_name == "python_generate":
-                    code = node_output.get("python_code")
+                    code = node_output.get("python_code", "")
                     if code:
-                        yield await _create_sse_event("python_code", {
-                            "code": code,
-                        }, TEXT_TYPE_PYTHON)
-
-                # ===== Python 执行 =====
-                elif node_name == "python_execute":
-                    is_success = node_output.get("python_is_success", False)
-                    charts = node_output.get("python_charts", [])
-                    yield await _create_sse_event("python_execute", {
-                        "success": is_success,
-                        "charts_count": len(charts),
-                    })
+                        yield _format_sse_data(_build_graph_response(
+                            agent_id, thread_id, java_name, code, TEXT_TYPE_PYTHON
+                        ))
+                    m.finish("success")
+                    m.log()
 
                 # ===== Python 分析 =====
                 elif node_name == "python_analyze":
                     analysis = node_output.get("python_analysis", "")
-                    if analysis:
-                        yield await _create_sse_event("python_analysis", {
-                            "analysis": analysis[:500],
-                        })
+                    yield _format_sse_data(_build_graph_response(
+                        agent_id, thread_id, java_name, analysis or "", TEXT_TYPE_TEXT
+                    ))
+                    m.finish("success")
+                    m.log()
 
                 # ===== 报告生成 =====
                 elif node_name == "report_generator":
-                    report = node_output.get("report", "")
                     html_report = node_output.get("html_report", "")
-                    display_style = node_output.get("display_style")
-                    yield await _create_sse_event("report", {
-                        "report": report,
-                        "html_report": html_report,
-                        "display_style": display_style,
-                    }, TEXT_TYPE_MARKDOWN)
+                    report = node_output.get("report", "")
+                    markdown_report = node_output.get("markdown_report", "")
+
+                    if html_report:
+                        yield _format_sse_data(_build_graph_response(
+                            agent_id, thread_id, java_name, html_report, TEXT_TYPE_HTML
+                        ))
+                    elif markdown_report:
+                        yield _format_sse_data(_build_graph_response(
+                            agent_id, thread_id, java_name, markdown_report, TEXT_TYPE_MARK_DOWN
+                        ))
+                    elif report:
+                        yield _format_sse_data(_build_graph_response(
+                            agent_id, thread_id, java_name, report, TEXT_TYPE_MARK_DOWN
+                        ))
+                    m.finish("success")
+                    m.log()
 
                 # ===== Human Feedback (interrupt 会在此暂停) =====
                 elif node_name == "human_feedback":
-                    feedback_data = node_output
-                    if isinstance(feedback_data, dict) and feedback_data.get("type") == "human_feedback":
-                        yield await _create_sse_event("paused", {
-                            "message": feedback_data.get("message", "等待人工反馈"),
-                            "plan_description": feedback_data.get("plan_description", ""),
-                            "current_step": feedback_data.get("current_step", 1),
-                        })
+                    if isinstance(node_output, dict) and node_output.get("type") == "human_feedback":
+                        text = json.dumps(node_output, ensure_ascii=False)
+                        yield _format_sse_data(_build_graph_response(
+                            agent_id, thread_id, java_name, text, TEXT_TYPE_JSON
+                        ))
+                        m.finish("paused")
+                        m.log()
+                        tracker.log_summary()
                         # LangGraph interrupt 在此触发，流自然暂停
                         return
 
-        # 发送完成事件
-        yield await _create_sse_event("done", {"message": "查询完成"})
+        # 发送完成事件 — 对齐 Java handleStreamComplete
+        logger.info(f"[Stream] Complete, threadId={thread_id}")
+        tracker.log_summary()
+        yield _format_sse_event("complete", _build_graph_response(
+            agent_id, thread_id, "", "", TEXT_TYPE_TEXT, complete=True
+        ))
 
+    except asyncio.CancelledError:
+        logger.info(f"[Stream] Client disconnected, threadId={thread_id}, releasing resources")
+        tracker.log_summary()
+        # 前端关闭 EventSource → 正常释放，不发送额外 SSE
+        return
     except Exception as e:
-        logger.error(f"[Stream] Error: {e}")
-        yield await _create_sse_event("error", {"error": str(e)})
+        import traceback as tb
+        tb.print_exc()
+        logger.error(f"[Stream] Error for threadId={thread_id}: {e}\n{tb.format_exc()}")
+        tracker.log_summary()
+        yield _format_sse_event("error", _build_graph_response(
+            agent_id, thread_id, "", str(e), TEXT_TYPE_TEXT, error=True
+        ))
 
 
 # ========== API 端点 ==========
@@ -355,29 +377,17 @@ async def stream_query(
     query_request: QueryRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """流式查询接口（SSE）— 对齐 Java GraphController.streamSearch()
+    """流式查询接口（SSE）— Python 扩展接口
 
-    事件类型:
-    - start: 开始处理
-    - intent: 意图识别结果
-    - knowledge: 知识召回结果
-    - rewrite: 查询改写结果
-    - schema: Schema 召回完成
-    - table_relation: 表关系构建完成
-    - feasibility: 可行性评估结果
-    - plan: 执行计划（JSON）
-    - plan_step: 计划执行步骤
-    - sql: SQL 生成（textType: SQL）
-    - semantic_check: 语义校验结果
-    - sql_result: SQL 执行结果（textType: JSON）
-    - sql_error: SQL 执行错误
-    - python_code: Python 代码生成（textType: Python）
-    - python_execute: Python 执行结果
-    - python_analysis: Python 分析结论
-    - report: 最终报告（textType: Markdown）
-    - paused: 暂停等待人工反馈
-    - done: 处理完成
-    - error: 错误信息
+    这是 Python 版独有的 POST 端点，使用 JSON Body 传参（QueryRequest schema）。
+    前端主链路以 GET /api/stream/search 为准（兼容 Java 前端）。
+
+    SSE 格式与 GET /api/stream/search 完全一致:
+      - 节点输出 → data: {GraphNodeResponse JSON}
+      - 完成 → event: complete + data: {complete:true}
+      - 错误 → event: error + data: {error:true}
+
+    适用场景: 内部调用、测试、非浏览器客户端。
     """
     return StreamingResponse(
         stream_workflow_execution(

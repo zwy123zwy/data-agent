@@ -12,7 +12,7 @@ class ChatMessageCreateRequest(BaseModel):
     """创建消息请求 — 对齐 Java ChatMessageDTO"""
     role: str = Field(..., pattern="^(user|assistant|system)$")
     content: str = Field(..., description="消息内容")
-    message_type: str = Field("text", alias="messageType", pattern="^(text|sql|result|error)$")
+    message_type: str = Field("text", alias="messageType", pattern="^(text|sql|result|error|html|result-set|html-report|markdown-report|json|python)$")
     metadata: Optional[Dict[str, Any]] = Field(None, description="元数据")
     title_needed: bool = Field(False, alias="titleNeeded", description="是否自动生成标题")
 

@@ -46,6 +46,7 @@ async def python_analyze_node(state: WorkflowState) -> Dict[str, Any]:
         return {
             "python_analysis": fallback_msg + basic_stats,
             "sql_step_results": step_results,
+            "plan_current_step": current_step + 1,
         }
 
     # 正常分析模式
@@ -79,6 +80,7 @@ async def python_analyze_node(state: WorkflowState) -> Dict[str, Any]:
         return {
             "python_analysis": analysis,
             "sql_step_results": step_results,
+            "plan_current_step": current_step + 1,
         }
 
     except Exception as e:

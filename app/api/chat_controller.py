@@ -1,4 +1,6 @@
-"""Chat API — 对齐 Java ChatController + SessionEventController"""
+"""
+Chat API  
+"""
 import asyncio
 import json
 import logging
@@ -46,7 +48,16 @@ def _session_to_response(session) -> dict:
 
 
 def _message_to_response(message) -> dict:
-    return ChatMessageResponse.model_validate(message).model_dump(by_alias=True)
+    """手动构建响应字典，确保 camelCase key 对齐前端 ChatMessage 接口"""
+    return {
+        "id": message.id,
+        "sessionId": message.session_id,
+        "role": message.role,
+        "content": message.content,
+        "messageType": message.message_type,
+        "metadata": message.metadata_,
+        "createTime": message.create_time.isoformat() if message.create_time else None,
+    }
 
 
 # ==================================================================
@@ -55,7 +66,7 @@ def _message_to_response(message) -> dict:
 
 @router.get("/agent/{agent_id}/sessions", summary="获取会话列表")
 async def list_sessions(agent_id: int, db: AsyncSession = Depends(get_db)):
-    """获取 Agent 的所有会话 — 对齐 Java getAgentSessions"""
+    """获取 Agent 的所有会话"""
     agent = await AgentService.get_agent(db, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")
@@ -69,7 +80,7 @@ async def create_session(
     body: Optional[ChatSessionCreateRequest] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """创建新会话 — 对齐 Java createSession"""
+    """创建新会话"""
     agent = await AgentService.get_agent(db, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")
@@ -81,7 +92,7 @@ async def create_session(
 
 @router.delete("/agent/{agent_id}/sessions", summary="清空会话")
 async def clear_sessions(agent_id: int, db: AsyncSession = Depends(get_db)):
-    """清空 Agent 的所有会话 — 对齐 Java clearAgentSessions"""
+    """清空 Agent 的所有会话"""
     agent = await AgentService.get_agent(db, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")
@@ -129,7 +140,7 @@ async def stream_session_events(agent_id: int, db: AsyncSession = Depends(get_db
 
 @router.get("/sessions/{session_id}/messages", summary="获取消息列表")
 async def list_messages(session_id: str, db: AsyncSession = Depends(get_db)):
-    """获取会话的所有消息 — 对齐 Java getSessionMessages"""
+    """获取会话的所有消息"""
     session = await ChatService.get_session(db, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在")
@@ -143,7 +154,7 @@ async def save_message(
     request: ChatMessageCreateRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """保存消息到会话 — 对齐 Java saveMessage"""
+    """保存消息到会话 """
     session = await ChatService.get_session(db, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在")
@@ -154,10 +165,10 @@ async def save_message(
         message_type=request.message_type,
         metadata=request.metadata,
     )
-    # 对齐 Java: titleNeeded 时异步生成会话标题
+    
     if request.title_needed and request.role == "user":
         from ..services.session_title_service import schedule_title_generation
-        from ..core.database import async_session_factory
+        from ..core.database import async_session_maker as async_session_factory
         asyncio.create_task(
             schedule_title_generation(
                 session_id, session.agent_id, request.content, ChatService, async_session_factory
@@ -173,14 +184,15 @@ async def save_message(
 @router.put("/sessions/{session_id}/pin", summary="置顶/取消置顶会话")
 async def pin_session(
     session_id: str,
-    isPinned: int = Query(..., description="1=置顶, 0=取消置顶"),
+    isPinned: bool = Query(..., alias="isPinned", description="true=置顶, false=取消置顶"),
     db: AsyncSession = Depends(get_db),
 ):
-    """置顶或取消置顶会话 — 对齐 Java pinSession"""
+    """置顶或取消置顶会话"""
     session = await ChatService.get_session(db, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在")
-    await ChatService.pin_session(db, session_id, isPinned)
+    is_pinned_int = 1 if isPinned else 0
+    await ChatService.pin_session(db, session_id, is_pinned_int)
     msg = "会话已置顶" if isPinned else "会话已取消置顶"
     return {"success": True, "message": msg, "data": None}
 
@@ -191,7 +203,7 @@ async def rename_session(
     title: str = Query(..., min_length=1, description="新标题"),
     db: AsyncSession = Depends(get_db),
 ):
-    """重命名会话 — 对齐 Java renameSession"""
+    """重命名会话"""
     if not title.strip():
         raise HTTPException(status_code=400, detail="标题不能为空")
     session = await ChatService.get_session(db, session_id)
@@ -203,7 +215,7 @@ async def rename_session(
 
 @router.delete("/sessions/{session_id}", summary="删除会话")
 async def delete_session(session_id: str, db: AsyncSession = Depends(get_db)):
-    """删除单个会话 — 对齐 Java deleteSession"""
+    """删除单个会话"""
     success = await ChatService.delete_session(db, session_id)
     if not success:
         raise HTTPException(status_code=404, detail="会话不存在")
@@ -216,7 +228,7 @@ async def download_html_report(
     content: str = Body(..., media_type="text/plain"),
     db: AsyncSession = Depends(get_db),
 ):
-    """生成 HTML 报告并下载 — 对齐 Java convertAndDownloadHtml"""
+    """生成 HTML 报告并下载 """
     session = await ChatService.get_session(db, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在")

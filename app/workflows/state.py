@@ -48,6 +48,7 @@ class StateKeys:
 
     # ── 意图识别 ──
     INTENT = "intent"
+    CLASSIFICATION = "classification"
 
     # ── 知识召回 (RAG Evidence) ──
     RECALLED_KNOWLEDGE = "recalled_knowledge"
@@ -195,6 +196,7 @@ class WorkflowState(TypedDict, total=False):
     # 2. INTENT — 意图识别
     # =====================================================================
     intent: Optional[str]
+    classification: Optional[str]  # 对齐 Java IntentRecognitionOutputDTO.classification
 
     # =====================================================================
     # 3. RAG — 知识召回 (Evidence Recall)
@@ -218,7 +220,7 @@ class WorkflowState(TypedDict, total=False):
     table_documents: Optional[List[Any]]
     column_documents: Optional[List[Any]]
     db_dialect_type: Optional[str]
-    semanti_model_prompt: Optional[str]
+    semantic_model_prompt: Optional[str]
     table_relation_exception: Optional[str]
     table_relation_retry_count: Optional[int]
 
@@ -240,7 +242,7 @@ class WorkflowState(TypedDict, total=False):
     generated_sql: Optional[str]
     sql_generate_count: int
     sql_regenerate_reason: Optional[Dict[str, Any]]
-    semanti_consistency_result: Optional[bool]
+    semantic_consistency_result: Optional[bool]
     sql_result: Optional[List[Dict[str, Any]]]
     sql_result_list_memory: Optional[List[Dict[str, Any]]]
     sql_error: Optional[str]
@@ -322,8 +324,22 @@ def get_current_instruction(state: WorkflowState) -> str:
     从 query_plan.execution_plan[current_step] 中提取当前步骤描述
     作为 LLM 生成 SQL/Python 代码时的具体指令
     """
+    import json
+    import logging
     plan = state.get("query_plan")
     if not plan:
+        return state.get("user_query", "")
+    # query_plan 可能是 JSON 字符串（从 planner 写入）或 dict（从 plan_executor 反序列化后）
+    if isinstance(plan, str):
+        try:
+            plan = json.loads(plan)
+        except json.JSONDecodeError:
+            return state.get("user_query", "")
+    # plan 必须是 dict 才能继续，如果不是 dict，说明被意外覆盖了
+    if not isinstance(plan, dict):
+        logging.getLogger(__name__).warning(
+            "get_current_instruction: plan is not dict! type=%s", type(plan).__name__
+        )
         return state.get("user_query", "")
     steps = plan.get("execution_plan") or plan.get("steps", [])
     current = get_current_step_number(state) - 1

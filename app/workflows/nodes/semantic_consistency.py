@@ -33,11 +33,6 @@ async def semantic_consistency_node(state: WorkflowState) -> Dict[str, Any]:
     - 不通过 → semantic_consistency_result = false + 设置 sql_regenerate_reason
     """
     sql = state.get("generated_sql", "")
-    schema = state.get("schema", "")
-    evidence = state.get("recalled_knowledge", "")
-    dialect = state.get("db_dialect_type", "")
-    user_query = get_canonical_query(state)
-    instruction = get_current_instruction(state)
 
     if not sql:
         logger.warning("[SemanticConsistency] No SQL to validate")
@@ -46,6 +41,12 @@ async def semantic_consistency_node(state: WorkflowState) -> Dict[str, Any]:
     logger.info(f"[SemanticConsistency] Validating SQL: {sql[:100]}...")
 
     try:
+        schema = state.get("schema", "")
+        evidence = state.get("recalled_knowledge", "")
+        dialect = state.get("db_dialect_type", "")
+        user_query = get_canonical_query(state)
+        instruction = get_current_instruction(state)
+
         prompt = (
             f"用户查询: {user_query}\n\n"
             f"当前步骤需求: {instruction}\n\n"
