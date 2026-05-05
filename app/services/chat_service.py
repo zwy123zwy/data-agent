@@ -70,7 +70,7 @@ class ChatService:
             await db.commit()
 
     @staticmethod
-    async def pin_session(db: AsyncSession, session_id: str, is_pinned: bool):
+    async def pin_session(db: AsyncSession, session_id: str, is_pinned: int):
         """置顶/取消置顶会话 — 对齐 Java pinSession"""
         session = await ChatService.get_session(db, session_id)
         if session:

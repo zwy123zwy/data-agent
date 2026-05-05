@@ -9,7 +9,7 @@ from .knowledge import KnowledgeCreateRequest, KnowledgeUpdateRequest, Knowledge
 from .semantic_model import SemanticModelCreate, SemanticModelUpdate, SemanticModelResponse
 from .query_plan import QueryPlanCreate, QueryPlanResponse
 from .model_config import ModelConfigCreate, ModelConfigUpdate, ModelConfigResponse, ModelTestRequest
-from .human_feedback import HumanFeedbackCreate, HumanFeedbackSubmit, HumanFeedbackResponse
+from .human_feedback import HumanFeedbackCreateRequest, HumanFeedbackSubmitRequest, HumanFeedbackResponse
 from .query import QueryRequest, QueryResponse
 
 __all__ = [
@@ -28,7 +28,7 @@ __all__ = [
     # ModelConfig
     "ModelConfigCreate", "ModelConfigUpdate", "ModelConfigResponse", "ModelTestRequest",
     # HumanFeedback
-    "HumanFeedbackCreate", "HumanFeedbackSubmit", "HumanFeedbackResponse",
+    "HumanFeedbackCreateRequest", "HumanFeedbackSubmitRequest", "HumanFeedbackResponse",
     # Query
     "QueryRequest", "QueryResponse"
 ]

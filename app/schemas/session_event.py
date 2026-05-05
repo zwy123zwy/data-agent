@@ -1,5 +1,5 @@
 """SessionUpdateEvent schema — 对齐 Java SessionUpdateEvent VO"""
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class SessionUpdateEvent(BaseModel):
@@ -7,6 +7,8 @@ class SessionUpdateEvent(BaseModel):
     type: str = Field(..., alias="type")
     session_id: str = Field(..., alias="sessionId")
     title: str = Field(..., alias="title")
+
+    model_config = ConfigDict(populate_by_name=True)
 
     @staticmethod
     def title_updated(session_id: str, title: str) -> "SessionUpdateEvent":
