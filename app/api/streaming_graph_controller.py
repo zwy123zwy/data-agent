@@ -298,8 +298,9 @@ async def stream_workflow_execution(
 
                 # ===== Schema 召回 =====
                 elif node_name == "schema_recall":
-                    schema = node_output.get("schema", "")
-                    table_count = schema.count("CREATE TABLE") if schema else 0
+                    schema_info = node_output.get("schema_info", {})
+                    tables = schema_info.get("tables", []) if isinstance(schema_info, dict) else []
+                    table_count = len(tables)
                     text = f"正在加载数据库表结构...找到 {table_count} 张表" if table_count else "正在加载数据库表结构..."
                     yield _format_sse_data(_build_graph_response(
                         agent_id, thread_id, java_name, text, TEXT_TYPE_TEXT
@@ -309,9 +310,14 @@ async def stream_workflow_execution(
 
                 # ===== 表关系分析 =====
                 elif node_name == "table_relation":
-                    relations = node_output.get("table_relations", "")
-                    has_relations = bool(relations)
-                    text = f"正在分析表关系..." if not has_relations else f"正在分析表关系...\n{str(relations)[:500]}"
+                    schema_info = node_output.get("schema_info", {})
+                    if isinstance(schema_info, dict):
+                        relations = schema_info.get("relations", [])
+                        table_count = len(schema_info.get("tables", []))
+                        rel_count = len(relations)
+                        text = f"正在分析表关系...{table_count} 张表, {rel_count} 条关系" if table_count else "正在分析表关系..."
+                    else:
+                        text = "正在分析表关系..."
                     yield _format_sse_data(_build_graph_response(
                         agent_id, thread_id, java_name, text, TEXT_TYPE_TEXT
                     ))
@@ -335,12 +341,13 @@ async def stream_workflow_execution(
 
                 # ===== 计划生成 =====
                 elif node_name == "planner":
-                    plan = node_output.get("query_plan", {})
-                    if isinstance(plan, dict):
-                        steps = plan.get("execution_plan", [])
+                    plan_raw = node_output.get("query_plan", "")
+                    try:
+                        plan = json.loads(plan_raw) if isinstance(plan_raw, str) else plan_raw
+                        steps = plan.get("execution_plan", []) if isinstance(plan, dict) else []
                         step_count = len(steps)
                         text = f"正在制定执行计划...共 {step_count} 个步骤"
-                    else:
+                    except (json.JSONDecodeError, TypeError):
                         text = "正在制定执行计划..."
                     yield _format_sse_data(_build_graph_response(
                         agent_id, thread_id, java_name, text, TEXT_TYPE_TEXT
