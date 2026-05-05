@@ -218,9 +218,18 @@ async def stream_workflow_execution(
         # 内部节点 (RAG、Schema、校验等) 不应暴露给前端
         user_visible_nodes = {
             "intent_recognition",
+            "knowledge_recall",
+            "query_rewrite",
+            "schema_recall",
+            "table_relation",
+            "feasibility",
+            "planner",
+            "plan_executor",
             "sql_generate",
+            "semantic_consistency",
             "sql_execute",
             "python_generate",
+            "python_execute",
             "python_analyze",
             "report_generator",
             "human_feedback",
@@ -266,6 +275,93 @@ async def stream_workflow_execution(
                         tracker.log_summary()
                         return
 
+                # ===== 知识召回 =====
+                elif node_name == "knowledge_recall":
+                    knowledge_items = node_output.get("knowledge_items", [])
+                    count = len(knowledge_items)
+                    text = f"正在检索相关知识...找到 {count} 条相关知识" if count else "正在检索相关知识..."
+                    yield _format_sse_data(_build_graph_response(
+                        agent_id, thread_id, java_name, text, TEXT_TYPE_TEXT
+                    ))
+                    m.finish("success")
+                    m.log()
+
+                # ===== 查询改写 =====
+                elif node_name == "query_rewrite":
+                    rewritten = node_output.get("rewritten_query", "")
+                    text = f"正在优化查询...\n{rewritten}" if rewritten else f"正在优化查询...(使用原始查询)"
+                    yield _format_sse_data(_build_graph_response(
+                        agent_id, thread_id, java_name, text, TEXT_TYPE_TEXT
+                    ))
+                    m.finish("success")
+                    m.log()
+
+                # ===== Schema 召回 =====
+                elif node_name == "schema_recall":
+                    schema = node_output.get("schema", "")
+                    table_count = schema.count("CREATE TABLE") if schema else 0
+                    text = f"正在加载数据库表结构...找到 {table_count} 张表" if table_count else "正在加载数据库表结构..."
+                    yield _format_sse_data(_build_graph_response(
+                        agent_id, thread_id, java_name, text, TEXT_TYPE_TEXT
+                    ))
+                    m.finish("success")
+                    m.log()
+
+                # ===== 表关系分析 =====
+                elif node_name == "table_relation":
+                    relations = node_output.get("table_relations", "")
+                    has_relations = bool(relations)
+                    text = f"正在分析表关系..." if not has_relations else f"正在分析表关系...\n{str(relations)[:500]}"
+                    yield _format_sse_data(_build_graph_response(
+                        agent_id, thread_id, java_name, text, TEXT_TYPE_TEXT
+                    ))
+                    m.finish("success")
+                    m.log()
+
+                # ===== 可行性评估 =====
+                elif node_name == "feasibility":
+                    result = node_output.get("feasibility_result", {})
+                    if isinstance(result, dict):
+                        feasible = result.get("feasible", True)
+                        reason = result.get("reason", "")
+                        text = f"正在评估查询可行性...{'可行' if feasible else '不可行: ' + reason}"
+                    else:
+                        text = "正在评估查询可行性..."
+                    yield _format_sse_data(_build_graph_response(
+                        agent_id, thread_id, java_name, text, TEXT_TYPE_TEXT
+                    ))
+                    m.finish("success")
+                    m.log()
+
+                # ===== 计划生成 =====
+                elif node_name == "planner":
+                    plan = node_output.get("query_plan", {})
+                    if isinstance(plan, dict):
+                        steps = plan.get("execution_plan", [])
+                        step_count = len(steps)
+                        text = f"正在制定执行计划...共 {step_count} 个步骤"
+                    else:
+                        text = "正在制定执行计划..."
+                    yield _format_sse_data(_build_graph_response(
+                        agent_id, thread_id, java_name, text, TEXT_TYPE_TEXT
+                    ))
+                    m.finish("success")
+                    m.log()
+
+                # ===== 计划执行调度 =====
+                elif node_name == "plan_executor":
+                    next_node = node_output.get("plan_next_node", "")
+                    current_step = node_output.get("plan_current_step", 1)
+                    if next_node:
+                        text = f"正在执行步骤 {current_step}..."
+                    else:
+                        text = "正在执行计划..."
+                    yield _format_sse_data(_build_graph_response(
+                        agent_id, thread_id, java_name, text, TEXT_TYPE_TEXT
+                    ))
+                    m.finish("success")
+                    m.log()
+
                 # ===== SQL 生成 =====
                 elif node_name == "sql_generate":
                     sql = node_output.get("generated_sql", "")
@@ -295,6 +391,17 @@ async def stream_workflow_execution(
                     m.finish(sql_status)
                     m.log()
 
+                # ===== 语义一致性校验 =====
+                elif node_name == "semantic_consistency":
+                    passed = node_output.get("semantic_consistency_result", False)
+                    score = node_output.get("semantic_consistency_score", 0)
+                    text = f"正在校验 SQL 语义...{'✓ 通过' if passed else '⚠ 未通过'}"
+                    yield _format_sse_data(_build_graph_response(
+                        agent_id, thread_id, java_name, text, TEXT_TYPE_TEXT
+                    ))
+                    m.finish("success" if passed else "error")
+                    m.log()
+
                 # ===== Python 代码生成 =====
                 elif node_name == "python_generate":
                     code = node_output.get("python_code", "")
@@ -303,6 +410,21 @@ async def stream_workflow_execution(
                             agent_id, thread_id, java_name, code, TEXT_TYPE_PYTHON
                         ))
                     m.finish("success")
+                    m.log()
+
+                # ===== Python 代码执行 =====
+                elif node_name == "python_execute":
+                    is_success = node_output.get("python_is_success", False)
+                    error = node_output.get("python_error", "")
+                    if is_success:
+                        yield _format_sse_data(_build_graph_response(
+                            agent_id, thread_id, java_name, "Python 代码执行成功", TEXT_TYPE_TEXT
+                        ))
+                    else:
+                        yield _format_sse_data(_build_graph_response(
+                            agent_id, thread_id, java_name, f"Python 代码执行失败: {error[:200]}" if error else "Python 代码执行中...", TEXT_TYPE_TEXT
+                        ))
+                    m.finish("success" if is_success else "error")
                     m.log()
 
                 # ===== Python 分析 =====

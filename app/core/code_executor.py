@@ -116,9 +116,11 @@ class LocalExecutor(CodeExecutor):
                         json.dump(data, f, ensure_ascii=False)
 
                     # 在代码前添加数据加载
+                    # 使用 !r (repr) 确保 Windows 路径中的反斜杠被正确转义
+                    # 避免 \U, \u 等被解释为 unicode 转义序列
                     code = f"""
 import json
-with open('{data_file}', 'r', encoding='utf-8') as f:
+with open({data_file!r}, 'r', encoding='utf-8') as f:
     sql_result = json.load(f)
 
 {code}
