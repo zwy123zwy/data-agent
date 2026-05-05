@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/upload", tags=["文件上传"])
 @router.post("/avatar", summary="上传头像图片")
 async def upload_avatar(file: UploadFile = File(...)):
     """上传头像图片 — POST /api/upload/avatar
-    对齐 Java FileUploadController.uploadAvatar()"""
+    """
     # 验证文件类型
     content_type = file.content_type
     file_content = await file.read()
@@ -38,7 +38,6 @@ async def upload_avatar(file: UploadFile = File(...)):
 @router.get("/{file_path:path}", summary="获取上传的文件")
 async def get_file(file_path: str):
     """获取上传的文件 — GET /api/upload/** (catch-all)
-    对齐 Java FileUploadController.getFile()
 
     URL 格式: /api/upload/{urlPrefix}/{relativePath}
     例如: /api/upload/uploads/avatars/abc.png → 相对路径 = avatars/abc.png
