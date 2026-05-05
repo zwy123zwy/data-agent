@@ -62,8 +62,8 @@ class DatasourceResponse(BaseModel):
     test_status: Optional[str] = Field(None, alias="testStatus")
     description: Optional[str] = None
     creator_id: Optional[int] = Field(None, alias="creatorId")
-    created_at: Optional[datetime] = Field(None, alias="createTime")
-    updated_at: Optional[datetime] = Field(None, alias="updateTime")
+    create_time: Optional[datetime] = Field(None, alias="createTime")
+    update_time: Optional[datetime] = Field(None, alias="updateTime")
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 

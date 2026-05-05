@@ -101,7 +101,7 @@ class AgentDatasourceService:
             select(AgentDatasource, Datasource)
             .join(Datasource, AgentDatasource.datasource_id == Datasource.id)
             .where(AgentDatasource.agent_id == agent_id)
-            .order_by(AgentDatasource.created_at.desc())
+            .order_by(AgentDatasource.create_time.desc())
         )
         result = await db.execute(query)
         rows = result.all()
@@ -121,8 +121,8 @@ class AgentDatasourceService:
                 agent_id=agent_ds.agent_id,
                 datasource_id=agent_ds.datasource_id,
                 is_active=int(agent_ds.is_active or 0),
-                created_at=agent_ds.created_at,
-                updated_at=getattr(agent_ds, "updated_at", None),
+                create_time=agent_ds.create_time,
+                update_time=getattr(agent_ds, "update_time", None),
                 datasource=DatasourceResponse.model_validate(datasource),
                 select_tables=select_tables,
             ))

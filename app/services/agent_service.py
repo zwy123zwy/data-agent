@@ -76,7 +76,7 @@ class AgentService(BaseService[Agent]):
                 (Agent.name.like(kw)) | (Agent.description.like(kw))
             )
         return await AgentService.list(
-            db, filters=filters, order_by=Agent.created_at.desc(), skip=skip, limit=limit
+            db, filters=filters, order_by=Agent.create_time.desc(), skip=skip, limit=limit
         )
 
     @staticmethod

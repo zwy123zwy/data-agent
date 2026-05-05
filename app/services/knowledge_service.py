@@ -161,7 +161,7 @@ class KnowledgeService:
         result = await db.execute(
             select(Knowledge)
             .where(and_(*conditions))
-            .order_by(Knowledge.created_at.desc())
+            .order_by(Knowledge.created_time.desc())
             .offset(skip)
             .limit(limit)
         )
@@ -345,7 +345,7 @@ class KnowledgeService:
         result = await db.execute(
             select(Knowledge)
             .where(and_(*conditions))
-            .order_by(Knowledge.created_at.desc())
+            .order_by(Knowledge.created_time.desc())
             .offset(offset)
             .limit(dto.page_size)
         )

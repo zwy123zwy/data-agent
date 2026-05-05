@@ -49,8 +49,8 @@ class AgentResponse(AgentBase):
     api_key: Optional[str] = Field(None, alias="apiKey", description="API Key(脱敏)")
     api_key_enabled: int = Field(0, alias="apiKeyEnabled", description="API Key启用: 0/1")
     human_review_enabled: int = Field(0, alias="humanReviewEnabled", description="人工审核: 0/1")
-    created_at: datetime = Field(..., alias="createTime")
-    updated_at: datetime = Field(..., alias="updateTime")
+    create_time: datetime = Field(..., alias="createTime")
+    update_time: datetime = Field(..., alias="updateTime")
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 

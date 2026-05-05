@@ -10,7 +10,7 @@ from ..core.database import Base
 
 
 class PromptConfig(Base):
-    __tablename__ = "prompt_config"
+    __tablename__ = "user_prompt_config"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=None, comment="UUID 主键")
     name: Mapped[str] = mapped_column(String(200), nullable=False, comment="配置名称")

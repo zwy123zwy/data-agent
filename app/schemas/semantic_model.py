@@ -40,16 +40,21 @@ class SemanticModelUpdate(BaseModel):
     metadata: Optional[Dict[str, Any]] = Field(None, description="元数据")
 
 
-class SemanticModelResponse(SemanticModelBase):
-    """语义模型响应"""
+class SemanticModelResponse(BaseModel):
+    """语义模型响应 — 对齐 Java SemanticModel entity camelCase"""
     id: int
-    agent_id: int
-    datasource_id: int
+    agent_id: int = Field(..., alias="agentId")
+    datasource_id: int = Field(..., alias="datasourceId")
+    table_name: str = Field(..., alias="tableName")
+    column_name: Optional[str] = Field(None, alias="columnName")
+    business_name: str = Field(..., alias="businessName")
+    business_description: Optional[str] = Field(None, alias="businessDescription")
+    synonyms: Optional[str] = None
+    column_comment: Optional[str] = Field(None, alias="columnComment")
+    data_type: Optional[str] = Field(None, alias="dataType")
     status: int = 1
-    created_at: datetime
-    updated_at: datetime
-
-    metadata: Optional[Dict[str, Any]] = Field(None, alias="metadata_")
+    created_time: datetime = Field(..., alias="createdTime")
+    updated_time: datetime = Field(..., alias="updatedTime")
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 

@@ -59,6 +59,7 @@ from ..workflows.graph import compiled_workflow
 from ..workflows.state import WorkflowState
 from ..services.agent_service import AgentService
 from ..services.agent_datasource_service import AgentDatasourceService
+from ..services.semantic_model_service import SemanticModelService
 import json
 import logging
 
@@ -80,6 +81,7 @@ def _build_initial_state(
     nl2sql_only: bool = False,
     human_review: bool = False,
     multi_turn_context: str = "",
+    semantic_model_prompt: str = "",
 ) -> WorkflowState:
     """构建初始 WorkflowState — 对齐 Java GraphRequest 字段映射"""
     return {
@@ -88,6 +90,7 @@ def _build_initial_state(
         "is_only_nl2sql": nl2sql_only,
         "human_review_enabled": human_review,
         "multi_turn_context": multi_turn_context,
+        "semantic_model_prompt": semantic_model_prompt,
         "sql_retry_count": 0,
         "sql_generate_count": 0,
         "python_tries_count": 0,
@@ -134,11 +137,28 @@ async def stream_workflow_execution(
             yield await _create_sse_event("error", {"error": "Agent 不存在"})
             return
 
-        # 检查数据源
-        active_datasource = await AgentDatasourceService.get_active_datasource(db, agent_id)
-        if not active_datasource:
+        # 检查数据源 — 获取激活的数据源及其 select_tables
+        agent_ds_list = await AgentDatasourceService.list_agent_datasources(db, agent_id)
+        active_agent_ds = next((item for item in agent_ds_list if item.is_active == 1), None)
+        if not active_agent_ds:
             yield await _create_sse_event("error", {"error": "没有激活的数据源"})
             return
+        datasource_id = active_agent_ds.datasource_id
+        select_tables = active_agent_ds.select_tables
+
+        # 构建语义模型 Prompt — 将业务术语映射注入到工作流
+        semantic_model_prompt = ""
+        if select_tables:
+            parts = []
+            for table_name in select_tables:
+                info = await SemanticModelService.get_table_semantic_info(
+                    db, agent_id, datasource_id, table_name
+                )
+                if info:
+                    parts.append(info)
+            semantic_model_prompt = "\n".join(parts)
+            if semantic_model_prompt:
+                logger.info(f"[Stream] Built semantic model prompt for {len(select_tables)} tables ({len(semantic_model_prompt)} chars)")
 
         # 构建初始状态
         initial_state = _build_initial_state(
@@ -146,6 +166,7 @@ async def stream_workflow_execution(
             user_query=user_query,
             nl2sql_only=nl2sql_only,
             human_review=human_feedback,
+            semantic_model_prompt=semantic_model_prompt,
         )
 
         # ===== 恢复路径：处理 HumanFeedback resume =====

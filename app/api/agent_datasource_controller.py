@@ -74,8 +74,8 @@ async def toggle_datasource(
             agent_id=agent_ds.agent_id,
             datasource_id=agent_ds.datasource_id,
             is_active=agent_ds.is_active,
-            created_at=agent_ds.created_at,
-            updated_at=getattr(agent_ds, "updated_at", None),
+            create_time=agent_ds.create_time,
+            update_time=getattr(agent_ds, "update_time", None),
             select_tables=[],
         )
         msg = "数据源已启用" if dto.is_active else "数据源已禁用"
@@ -140,8 +140,8 @@ async def bind_datasource(
             agent_id=agent_ds.agent_id,
             datasource_id=agent_ds.datasource_id,
             is_active=agent_ds.is_active,
-            created_at=agent_ds.created_at,
-            updated_at=getattr(agent_ds, "updated_at", None),
+            create_time=agent_ds.create_time,
+            update_time=getattr(agent_ds, "update_time", None),
             select_tables=[],
         ).model_dump(by_alias=True)
         return {"success": True, "message": "数据源添加成功", "data": resp}

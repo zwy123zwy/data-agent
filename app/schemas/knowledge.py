@@ -83,8 +83,8 @@ class KnowledgeResponse(BaseModel):
     splitter_type: Optional[str] = Field(None, alias="splitterType")
     is_deleted: int = Field(0, alias="isDeleted")
     is_resource_cleaned: int = Field(0, alias="isResourceCleaned")
-    created_at: datetime = Field(..., alias="createTime")
-    updated_at: datetime = Field(..., alias="updateTime")
+    created_time: datetime = Field(..., alias="createTime")
+    updated_time: datetime = Field(..., alias="updateTime")
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 

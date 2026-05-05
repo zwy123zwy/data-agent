@@ -24,5 +24,5 @@ class SemanticModel(Base):
     status = Column(Integer, default=1, comment="状态: 0-停用 1-启用（对齐Java）")
     sample_values = Column(JSON, comment="示例值")
     metadata_ = Column("metadata", JSON, comment="元数据")
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_time = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_time = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)

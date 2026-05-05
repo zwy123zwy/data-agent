@@ -8,7 +8,7 @@ from ..core.database import Base
 
 class Knowledge(Base):
     """知识库模型 - 对齐 Java AgentKnowledge"""
-    __tablename__ = "knowledge"
+    __tablename__ = "agent_knowledge"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     agent_id = Column(Integer, ForeignKey("agent.id", ondelete="CASCADE"), nullable=False, comment="Agent ID")
@@ -34,5 +34,5 @@ class Knowledge(Base):
     is_deleted = Column(Integer, default=0, comment="0=未删除, 1=已删除（对齐Java）")
     is_resource_cleaned = Column(Integer, default=0, comment="0=物理资源未清理, 1=物理资源已清理（对齐Java）")
 
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_time = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_time = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)

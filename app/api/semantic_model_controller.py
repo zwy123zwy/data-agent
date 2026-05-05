@@ -32,7 +32,8 @@ async def list_models(
         result = await SemanticModelService.get_by_agent_id(db, agentId)
     else:
         result = await SemanticModelService.get_all(db)
-    return {"success": True, "message": "success list semanticModel", "data": result}
+    data = [SemanticModelResponse.model_validate(m).model_dump(by_alias=True) for m in result]
+    return {"success": True, "message": "success list semanticModel", "data": data}
 
 
 @router.get("/{id}", summary="获取语义模型详情")
@@ -41,7 +42,8 @@ async def get_model(id: int, db: AsyncSession = Depends(get_db)):
     model = await SemanticModelService.get_semantic_model(db, id)
     if not model:
         return {"success": False, "message": "Semantic model not found"}
-    return {"success": True, "message": "success retrieve semanticModel", "data": model}
+    data = SemanticModelResponse.model_validate(model).model_dump(by_alias=True)
+    return {"success": True, "message": "success retrieve semanticModel", "data": data}
 
 
 @router.post("", summary="创建语义模型")
@@ -58,7 +60,8 @@ async def update_model(id: int, model_data: SemanticModelUpdate, db: AsyncSessio
     if not existing:
         return {"success": False, "message": "Semantic model not found"}
     model = await SemanticModelService.update_semantic_model(db, id, model_data)
-    return {"success": True, "message": "Semantic model updated successfully", "data": model}
+    data = SemanticModelResponse.model_validate(model).model_dump(by_alias=True)
+    return {"success": True, "message": "Semantic model updated successfully", "data": data}
 
 
 @router.delete("/{id}", summary="删除语义模型")

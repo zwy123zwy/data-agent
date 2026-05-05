@@ -81,7 +81,7 @@ class DatasourceService(BaseService[Datasource]):
         if status:
             filters.append(Datasource.status == status)
         return await DatasourceService.list(
-            db, filters=filters or None, order_by=Datasource.created_at.desc(), skip=skip, limit=limit,
+            db, filters=filters or None, order_by=Datasource.create_time.desc(), skip=skip, limit=limit,
         )
 
     @staticmethod

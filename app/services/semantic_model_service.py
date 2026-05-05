@@ -95,7 +95,7 @@ class SemanticModelService:
         result = await db.execute(
             select(SemanticModel)
             .where(and_(*conditions))
-            .order_by(SemanticModel.created_at.desc())
+            .order_by(SemanticModel.created_time.desc())
             .offset(skip)
             .limit(limit)
         )
@@ -201,7 +201,7 @@ class SemanticModelService:
     async def get_all(db: AsyncSession) -> list[SemanticModel]:
         """获取所有语义模型 — 对齐 Java getAll()"""
         result = await db.execute(
-            select(SemanticModel).order_by(SemanticModel.created_at.desc())
+            select(SemanticModel).order_by(SemanticModel.created_time.desc())
         )
         return list(result.scalars().all())
 
@@ -211,7 +211,7 @@ class SemanticModelService:
         result = await db.execute(
             select(SemanticModel)
             .where(SemanticModel.agent_id == agent_id)
-            .order_by(SemanticModel.created_at.desc())
+            .order_by(SemanticModel.created_time.desc())
         )
         return list(result.scalars().all())
 
@@ -220,7 +220,7 @@ class SemanticModelService:
         """关键词搜索 — 对齐 Java search()"""
         keyword_lower = keyword.lower()
         result = await db.execute(
-            select(SemanticModel).order_by(SemanticModel.created_at.desc())
+            select(SemanticModel).order_by(SemanticModel.created_time.desc())
         )
         models = result.scalars().all()
         return [
@@ -276,7 +276,7 @@ class SemanticModelService:
             try:
                 model = SemanticModel(
                     agent_id=agent_id,
-                    datasource_id=0,  # 导入时不强制 datasource_id
+                    datasource_id=None,  # 导入时不强制，后续可手动关联
                     table_name=item.table_name,
                     column_name=item.column_name,
                     business_name=item.business_name,

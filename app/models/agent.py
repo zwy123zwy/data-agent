@@ -31,13 +31,13 @@ class Agent(Base):
     human_review_enabled: Mapped[int] = mapped_column(Integer, default=0, comment="是否启用人工审核: 0/1")
 
     # 时间戳
-    created_at: Mapped[datetime] = mapped_column(
+    create_time: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
         default=datetime.utcnow,
         comment="创建时间"
     )
-    updated_at: Mapped[datetime] = mapped_column(
+    update_time: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
         default=datetime.utcnow,

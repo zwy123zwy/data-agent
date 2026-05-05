@@ -75,7 +75,7 @@ def _detect_implicit_relations(tables: List[Dict[str, Any]]) -> List[Dict[str, s
 
     # 出现在多个表中的同名字段 → 潜在关系
     for col_name, occurrences in col_index.items():
-        if len(occurrences) >= 2 and col_name not in ("id", "name", "created_at", "updated_at", "status"):
+        if len(occurrences) >= 2 and col_name not in ("id", "name", "created_at", "updated_at", "create_time", "update_time", "created_time", "updated_time", "status"):
             for i in range(len(occurrences)):
                 for j in range(i + 1, len(occurrences)):
                     relations.append({
