@@ -11,41 +11,15 @@ from ..services.knowledge_service import KnowledgeService
 from ..services.agent_service import AgentService
 from ..services.file_storage_service import FileStorageService
 from ..schemas.knowledge import (
-    KnowledgeCreate,
+    KnowledgeCreateRequest,
     KnowledgeResponse,
-    AgentKnowledgeQueryDTO,
-    UpdateKnowledgeDTO,
+    KnowledgeQueryRequest,
+    KnowledgeUpdateRequest,
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agent-knowledge", tags=["AgentKnowledge"])
-
-
-def _to_vo(knowledge) -> dict:
-    """构建 AgentKnowledgeVO 响应 — 对齐 Java AgentKnowledgeVO"""
-    return {
-        "id": knowledge.id,
-        "agentId": knowledge.agent_id,
-        "title": knowledge.title,
-        "content": knowledge.content,
-        "type": knowledge.type,
-        "question": getattr(knowledge, "question", None),
-        "isRecall": getattr(knowledge, "is_recall", 1),
-        "embeddingId": getattr(knowledge, "embedding_id", None),
-        "embeddingStatus": getattr(knowledge, "embedding_status", "PENDING"),
-        "errorMsg": getattr(knowledge, "error_msg", None),
-        "sourceFilename": getattr(knowledge, "source_filename", None),
-        "filePath": getattr(knowledge, "file_path", None),
-        "fileSize": getattr(knowledge, "file_size", None),
-        "fileType": getattr(knowledge, "file_type", None),
-        "splitterType": getattr(knowledge, "splitter_type", "token"),
-        "enabled": getattr(knowledge, "enabled", True),
-        "isDeleted": getattr(knowledge, "is_deleted", 0),
-        "isResourceCleaned": getattr(knowledge, "is_resource_cleaned", 0),
-        "createTime": knowledge.created_at.isoformat() if knowledge.created_at else None,
-        "updateTime": knowledge.updated_at.isoformat() if knowledge.updated_at else None,
-    }
 
 
 @router.get("/{id}", summary="获取知识详情")
@@ -55,7 +29,7 @@ async def get_knowledge(id: int, db: AsyncSession = Depends(get_db)):
         knowledge = await KnowledgeService.get_knowledge(db, id)
         if not knowledge:
             return {"success": False, "message": "知识不存在"}
-        return {"success": True, "message": "查询成功", "data": _to_vo(knowledge)}
+        return {"success": True, "message": "查询成功", "data": KnowledgeResponse.model_validate(knowledge).model_dump(by_alias=True)}
     except Exception as e:
         logger.error("查询知识详情失败：%s", e)
         return {"success": False, "message": f"查询知识详情失败：{e}"}
@@ -78,7 +52,6 @@ async def create_knowledge(
         if not agent:
             return {"success": False, "message": "Agent 不存在"}
 
-        # 处理文件上传
         source_filename = None
         file_path = None
         file_size = None
@@ -91,10 +64,8 @@ async def create_knowledge(
             source_filename = file.filename or "unknown"
             file_type_val = file.content_type or "application/octet-stream"
 
-            # 验证并存储文件
             error = FileStorageService.validate_image(file_type_val, file_size)
             if error:
-                # 不是图片，保存为通用文件
                 pass
 
             try:
@@ -103,18 +74,16 @@ async def create_knowledge(
             except Exception as e:
                 logger.error("文件存储失败: %s", e)
 
-            # 尝试读取文本内容（用于向量化）
             try:
                 file_content_text = file_bytes.decode("utf-8")
             except UnicodeDecodeError:
                 file_content_text = f"[二进制文件: {source_filename}]"
 
-        # 确定最终内容
         final_content = content or ""
         if file_content_text and not final_content:
             final_content = file_content_text
 
-        knowledge_data = KnowledgeCreate(
+        knowledge_data = KnowledgeCreateRequest(
             title=title,
             content=final_content,
             type=type,
@@ -127,7 +96,7 @@ async def create_knowledge(
         )
 
         knowledge = await KnowledgeService.create_knowledge(db, int(agentId), knowledge_data)
-        return {"success": True, "message": "创建知识成功，后台向量存储开始更新，请耐心等待...", "data": _to_vo(knowledge)}
+        return {"success": True, "message": "创建知识成功，后台向量存储开始更新，请耐心等待...", "data": KnowledgeResponse.model_validate(knowledge).model_dump(by_alias=True)}
     except Exception as e:
         logger.error("创建知识失败: %s", e)
         return {"success": False, "message": f"创建知识失败：{e}"}
@@ -136,11 +105,10 @@ async def create_knowledge(
 @router.put("/{id}", summary="更新知识")
 async def update_knowledge(
     id: int,
-    dto: UpdateKnowledgeDTO,
+    dto: KnowledgeUpdateRequest,
     db: AsyncSession = Depends(get_db),
 ):
     """更新知识 — 对齐 Java PUT /api/agent-knowledge/{id}"""
-    # 检查知识是否存在
     existing = await KnowledgeService.get_knowledge(db, id)
     if not existing:
         return {"success": False, "message": "知识不存在"}
@@ -148,20 +116,20 @@ async def update_knowledge(
     knowledge = await KnowledgeService.update_knowledge(db, id, dto)
     if not knowledge:
         return {"success": False, "message": "更新失败"}
-    return {"success": True, "message": "更新成功", "data": _to_vo(knowledge)}
+    return {"success": True, "message": "更新成功", "data": KnowledgeResponse.model_validate(knowledge).model_dump(by_alias=True)}
 
 
 @router.put("/recall/{id}", summary="切换召回状态")
 async def update_recall_status(
     id: int,
-    isRecall: bool = Query(..., description="是否召回"),
+    isRecall: int = Query(..., description="是否召回: 1=是, 0=否"),
     db: AsyncSession = Depends(get_db),
 ):
     """切换召回状态 — 对齐 Java PUT /api/agent-knowledge/recall/{id}"""
     knowledge = await KnowledgeService.update_recall_status(db, id, isRecall)
     if not knowledge:
         return {"success": False, "message": "知识不存在"}
-    return {"success": True, "message": "更新成功", "data": _to_vo(knowledge)}
+    return {"success": True, "message": "更新成功", "data": KnowledgeResponse.model_validate(knowledge).model_dump(by_alias=True)}
 
 
 @router.delete("/{id}", summary="删除知识")
@@ -174,13 +142,13 @@ async def delete_knowledge(id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/query/page", summary="分页查询知识")
-async def query_page(dto: AgentKnowledgeQueryDTO, db: AsyncSession = Depends(get_db)):
+async def query_page(dto: KnowledgeQueryRequest, db: AsyncSession = Depends(get_db)):
     """分页查询 — 对齐 Java POST /api/agent-knowledge/query/page"""
     try:
         items, total, page_num, page_size, total_pages = await KnowledgeService.query_page(db, dto)
         return {
             "success": True,
-            "data": [_to_vo(item) for item in items],
+            "data": [KnowledgeResponse.model_validate(item).model_dump(by_alias=True) for item in items],
             "total": total,
             "pageNum": page_num,
             "pageSize": page_size,
@@ -197,4 +165,4 @@ async def retry_embedding(id: int, db: AsyncSession = Depends(get_db)):
     knowledge = await KnowledgeService.retry_embedding(db, id)
     if not knowledge:
         return {"success": False, "message": "知识不存在"}
-    return {"success": True, "message": "重试向量化操作成功，如果是文件解析需要花费点时间，请耐心等待...", "data": _to_vo(knowledge)}
+    return {"success": True, "message": "重试向量化操作成功，如果是文件解析需要花费点时间，请耐心等待...", "data": KnowledgeResponse.model_validate(knowledge).model_dump(by_alias=True)}

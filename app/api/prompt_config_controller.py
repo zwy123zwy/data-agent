@@ -8,9 +8,11 @@ from typing import List, Optional
 from ..core.database import get_db
 from ..services.prompt_config_service import PromptConfigService
 from ..schemas.prompt_config import (
-    PromptConfigCreate,
-    PromptConfigUpdate,
+    PromptConfigSaveRequest,
+    PromptConfigUpdateRequest,
     PromptConfigResponse,
+    PriorityUpdateRequest,
+    DisplayOrderUpdateRequest,
     SUPPORTED_PROMPT_TYPES,
 )
 
@@ -25,7 +27,7 @@ router = APIRouter(prefix="/api/prompt-config", tags=["Prompt配置"])
 
 @router.post("/save", summary="创建或更新配置")
 async def save_config(
-    dto: PromptConfigCreate,
+    dto: PromptConfigSaveRequest,
     db: AsyncSession = Depends(get_db),
 ):
     """创建或更新 Prompt 配置 — 对齐 Java POST /api/prompt-config/save"""
@@ -33,12 +35,12 @@ async def save_config(
     return {
         "success": True,
         "message": "优化配置保存成功",
-        "data": _to_response(cfg),
+        "data": PromptConfigResponse.model_validate(cfg).model_dump(by_alias=True),
     }
 
 
 # ================================================================
-# GET 静态路径 (必须在 /{config_id} 之前注册，否则 FastAPI 会把 "list"/"types" 当成 config_id)
+# GET 静态路径 (必须在 /{config_id} 之前注册)
 # ================================================================
 
 @router.get("/list", summary="获取所有配置")
@@ -47,7 +49,7 @@ async def list_configs(db: AsyncSession = Depends(get_db)):
     configs = await PromptConfigService.get_all(db)
     return {
         "success": True,
-        "data": [_to_response(c) for c in configs],
+        "data": [PromptConfigResponse.model_validate(c).model_dump(by_alias=True) for c in configs],
         "total": len(configs),
     }
 
@@ -62,7 +64,7 @@ async def list_by_type(
     configs = await PromptConfigService.get_by_type(db, prompt_type, agent_id)
     return {
         "success": True,
-        "data": [_to_response(c) for c in configs],
+        "data": [PromptConfigResponse.model_validate(c).model_dump(by_alias=True) for c in configs],
         "total": len(configs),
     }
 
@@ -77,7 +79,7 @@ async def get_active_config(
     cfg = await PromptConfigService.get_active_by_type(db, prompt_type, agent_id)
     return {
         "success": True,
-        "data": _to_response(cfg) if cfg else None,
+        "data": PromptConfigResponse.model_validate(cfg).model_dump(by_alias=True) if cfg else None,
         "hasCustomConfig": cfg is not None,
     }
 
@@ -92,7 +94,7 @@ async def get_active_configs(
     configs = await PromptConfigService.get_active_all_by_type(db, prompt_type, agent_id)
     return {
         "success": True,
-        "data": [_to_response(c) for c in configs],
+        "data": [PromptConfigResponse.model_validate(c).model_dump(by_alias=True) for c in configs],
         "total": len(configs),
         "hasOptimizationConfigs": len(configs) > 0,
     }
@@ -132,7 +134,7 @@ async def get_config(config_id: str, db: AsyncSession = Depends(get_db)):
     cfg = await PromptConfigService.get_by_id(db, config_id)
     if not cfg:
         return {"success": False, "message": "配置不存在"}
-    return {"success": True, "data": _to_response(cfg)}
+    return {"success": True, "data": PromptConfigResponse.model_validate(cfg).model_dump(by_alias=True)}
 
 
 # ================================================================
@@ -177,12 +179,11 @@ async def disable_config(config_id: str, db: AsyncSession = Depends(get_db)):
 @router.post("/{config_id}/priority", summary="更新优先级")
 async def update_priority(
     config_id: str,
-    body: dict = Body(...),
+    body: PriorityUpdateRequest,
     db: AsyncSession = Depends(get_db),
 ):
     """更新优先级 — 对齐 Java POST /api/prompt-config/{id}/priority"""
-    priority = body.get("priority", 0)
-    ok = await PromptConfigService.update_priority(db, config_id, priority)
+    ok = await PromptConfigService.update_priority(db, config_id, body.priority)
     if not ok:
         return {"success": False, "message": "更新优先级失败"}
     return {"success": True, "message": "更新优先级成功"}
@@ -191,35 +192,11 @@ async def update_priority(
 @router.post("/{config_id}/display-order", summary="更新显示顺序")
 async def update_display_order(
     config_id: str,
-    body: dict = Body(...),
+    body: DisplayOrderUpdateRequest,
     db: AsyncSession = Depends(get_db),
 ):
     """更新显示顺序 — 对齐 Java POST /api/prompt-config/{id}/display-order"""
-    order = body.get("displayOrder", 0)
-    ok = await PromptConfigService.update_display_order(db, config_id, order)
+    ok = await PromptConfigService.update_display_order(db, config_id, body.display_order)
     if not ok:
         return {"success": False, "message": "更新显示顺序失败"}
     return {"success": True, "message": "更新显示顺序成功"}
-
-
-# ================================================================
-# helper
-# ================================================================
-
-def _to_response(cfg) -> dict:
-    """手动构建 camelCase 响应"""
-    return {
-        "id": cfg.id,
-        "name": cfg.name,
-        "promptType": cfg.prompt_type,
-        "agentId": cfg.agent_id,
-        "systemPrompt": cfg.system_prompt,
-        "optimizationPrompt": cfg.system_prompt,
-        "enabled": cfg.enabled,
-        "description": cfg.description,
-        "priority": cfg.priority,
-        "displayOrder": cfg.display_order,
-        "creator": cfg.creator,
-        "createTime": cfg.create_time.isoformat() if cfg.create_time else None,
-        "updateTime": cfg.update_time.isoformat() if cfg.update_time else None,
-    }

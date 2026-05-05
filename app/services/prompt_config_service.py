@@ -8,7 +8,7 @@ from typing import Optional, List
 from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..models.prompt_config import PromptConfig
-from ..schemas.prompt_config import PromptConfigCreate
+from ..schemas.prompt_config import PromptConfigSaveRequest
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ class PromptConfigService:
     """Prompt 配置管理服务"""
 
     @staticmethod
-    async def save_or_update(db: AsyncSession, dto: PromptConfigCreate) -> PromptConfig:
+    async def save_or_update(db: AsyncSession, dto: PromptConfigSaveRequest) -> PromptConfig:
         """保存或更新 — 对齐 Java saveOrUpdateConfig"""
         if dto.id:
             # 更新已有配置
@@ -26,7 +26,7 @@ class PromptConfigService:
                 cfg.name = dto.name
                 cfg.agent_id = dto.agent_id
                 cfg.system_prompt = dto.optimization_prompt
-                cfg.enabled = dto.enabled if dto.enabled is not None else True
+                cfg.enabled = dto.enabled if dto.enabled is not None else 1
                 cfg.description = dto.description
                 cfg.priority = dto.priority or 0
                 cfg.display_order = dto.display_order or 0
@@ -38,7 +38,7 @@ class PromptConfigService:
                     prompt_type=dto.prompt_type,
                     agent_id=dto.agent_id,
                     system_prompt=dto.optimization_prompt,
-                    enabled=dto.enabled if dto.enabled is not None else True,
+                    enabled=dto.enabled if dto.enabled is not None else 1,
                     description=dto.description,
                     priority=dto.priority or 0,
                     display_order=dto.display_order or 0,
@@ -94,7 +94,7 @@ class PromptConfigService:
         """获取当前激活的配置 — 对齐 Java getActiveConfigByType（返回优先级最高的）"""
         q = (
             select(PromptConfig)
-            .where(PromptConfig.prompt_type == prompt_type, PromptConfig.enabled == True)
+            .where(PromptConfig.prompt_type == prompt_type, PromptConfig.enabled == 1)
         )
         if agent_id is not None:
             q = q.where(PromptConfig.agent_id == agent_id)
@@ -109,7 +109,7 @@ class PromptConfigService:
         """获取所有激活的配置 — 对齐 Java getActiveConfigsByType"""
         q = (
             select(PromptConfig)
-            .where(PromptConfig.prompt_type == prompt_type, PromptConfig.enabled == True)
+            .where(PromptConfig.prompt_type == prompt_type, PromptConfig.enabled == 1)
         )
         if agent_id is not None:
             q = q.where(PromptConfig.agent_id == agent_id)
@@ -132,7 +132,7 @@ class PromptConfigService:
         cfg = await db.get(PromptConfig, config_id)
         if not cfg:
             return False
-        cfg.enabled = True
+        cfg.enabled = 1
         await db.flush()
         logger.info(f"[PromptConfig] Enabled: {config_id}")
         return True
@@ -142,7 +142,7 @@ class PromptConfigService:
         cfg = await db.get(PromptConfig, config_id)
         if not cfg:
             return False
-        cfg.enabled = False
+        cfg.enabled = 0
         await db.flush()
         logger.info(f"[PromptConfig] Disabled: {config_id}")
         return True
@@ -150,7 +150,7 @@ class PromptConfigService:
     @staticmethod
     async def batch_enable(db: AsyncSession, ids: List[str]) -> bool:
         await db.execute(
-            update(PromptConfig).where(PromptConfig.id.in_(ids)).values(enabled=True)
+            update(PromptConfig).where(PromptConfig.id.in_(ids)).values(enabled=1)
         )
         await db.flush()
         logger.info(f"[PromptConfig] Batch enabled: {ids}")
@@ -159,7 +159,7 @@ class PromptConfigService:
     @staticmethod
     async def batch_disable(db: AsyncSession, ids: List[str]) -> bool:
         await db.execute(
-            update(PromptConfig).where(PromptConfig.id.in_(ids)).values(enabled=False)
+            update(PromptConfig).where(PromptConfig.id.in_(ids)).values(enabled=0)
         )
         await db.flush()
         logger.info(f"[PromptConfig] Batch disabled: {ids}")

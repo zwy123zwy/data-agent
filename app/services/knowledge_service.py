@@ -39,8 +39,8 @@ from sqlalchemy import select, and_, func
 from typing import List, Optional, Dict, Any
 from ..models.knowledge import Knowledge
 from ..schemas.knowledge import (
-    KnowledgeCreate, KnowledgeUpdate, KnowledgeSearchRequest, KnowledgeSearchResult,
-    AgentKnowledgeQueryDTO,
+    KnowledgeCreateRequest, KnowledgeUpdateRequest, KnowledgeSearchRequest, KnowledgeSearchResult,
+    KnowledgeQueryRequest,
 )
 from ..core.vector_store import get_vector_store
 import logging
@@ -64,7 +64,7 @@ class KnowledgeService:
     async def create_knowledge(
         db: AsyncSession,
         agent_id: int,
-        knowledge_data: KnowledgeCreate
+        knowledge_data: KnowledgeCreateRequest
     ) -> Knowledge:
         """
         创建知识
@@ -151,7 +151,7 @@ class KnowledgeService:
         if type:
             conditions.append(Knowledge.type == type)
         if enabled_only:
-            conditions.append(Knowledge.enabled == True)
+            conditions.append(Knowledge.enabled == 1)
 
         # 查询总数
         count_result = await db.execute(select(func.count(Knowledge.id)).where(and_(*conditions)))
@@ -173,7 +173,7 @@ class KnowledgeService:
     async def update_knowledge(
         db: AsyncSession,
         knowledge_id: int,
-        knowledge_data: KnowledgeUpdate
+        knowledge_data: KnowledgeUpdateRequest
     ) -> Optional[Knowledge]:
         """更新知识"""
         knowledge = await KnowledgeService.get_knowledge(db, knowledge_id)
@@ -304,13 +304,13 @@ class KnowledgeService:
 
     @staticmethod
     async def update_recall_status(
-        db: AsyncSession, knowledge_id: int, is_recall: bool
+        db: AsyncSession, knowledge_id: int, is_recall: int
     ) -> Optional[Knowledge]:
         """切换召回状态 — 对齐 Java updateRecallStatus()"""
         knowledge = await KnowledgeService.get_knowledge(db, knowledge_id)
         if not knowledge:
             return None
-        knowledge.is_recall = 1 if is_recall else 0
+        knowledge.is_recall = is_recall
         await db.commit()
         await db.refresh(knowledge)
         logger.info(f"Updated recall status for knowledge {knowledge_id}: is_recall={is_recall}")
@@ -318,7 +318,7 @@ class KnowledgeService:
 
     @staticmethod
     async def query_page(
-        db: AsyncSession, dto: AgentKnowledgeQueryDTO
+        db: AsyncSession, dto: KnowledgeQueryRequest
     ) -> tuple[list[Knowledge], int]:
         """分页查询 — 对齐 Java queryByConditionsWithPage()"""
         from sqlalchemy import and_

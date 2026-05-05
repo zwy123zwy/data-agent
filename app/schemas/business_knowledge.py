@@ -4,7 +4,7 @@ from typing import Optional
 from pydantic import BaseModel, Field, ConfigDict
 
 
-class BusinessKnowledgeCreate(BaseModel):
+class BusinessKnowledgeCreateRequest(BaseModel):
     """创建业务知识请求 — 对齐 Java CreateBusinessKnowledgeDTO"""
     business_term: str = Field(..., alias="businessTerm", max_length=255, description="业务名词")
     description: Optional[str] = Field(None, description="描述")
@@ -15,7 +15,7 @@ class BusinessKnowledgeCreate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
-class BusinessKnowledgeUpdate(BaseModel):
+class BusinessKnowledgeUpdateRequest(BaseModel):
     """更新业务知识请求 — 对齐 Java UpdateBusinessKnowledgeDTO"""
     business_term: Optional[str] = Field(None, alias="businessTerm", max_length=255)
     description: Optional[str] = None

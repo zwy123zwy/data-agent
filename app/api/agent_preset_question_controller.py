@@ -1,13 +1,16 @@
 """AgentPresetQuestion API — 对齐 Java AgentPresetQuestionController"""
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List, Dict, Any
+from typing import List
 
 from ..core.database import get_db
 from ..services.agent_preset_question_service import AgentPresetQuestionService
 from ..services.agent_service import AgentService
-from ..schemas.agent_preset_question import AgentPresetQuestionResponse
+from ..schemas.agent_preset_question import (
+    PresetQuestionSaveRequest,
+    PresetQuestionResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -16,16 +19,15 @@ router = APIRouter(prefix="/api/agent", tags=["Agent预设问题"])
 
 @router.get(
     "/{agent_id}/preset-questions",
-    response_model=List[AgentPresetQuestionResponse],
     summary="获取预设问题列表",
 )
 async def get_preset_questions(agent_id: int, db: AsyncSession = Depends(get_db)):
-    """获取 Agent 的预设问题列表 — 对齐 Java getPresetQuestions"""
+    """获取 Agent 的预设问题列表 — 对齐 Java GET /{agentId}/preset-questions"""
     agent = await AgentService.get_agent(db, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")
     questions = await AgentPresetQuestionService.find_all_by_agent_id(db, agent_id)
-    return questions
+    return [PresetQuestionResponse.model_validate(q).model_dump(by_alias=True) for q in questions]
 
 
 @router.post(
@@ -34,14 +36,15 @@ async def get_preset_questions(agent_id: int, db: AsyncSession = Depends(get_db)
 )
 async def save_preset_questions(
     agent_id: int,
-    questions_data: List[Dict[str, Any]] = Body(..., description="预设问题列表 [{question, is_active?, sort_order?}]"),
+    body: PresetQuestionSaveRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """批量保存预设问题（先删后增）— 对齐 Java savePresetQuestions"""
+    """批量保存预设问题（先删后增）— 对齐 Java POST /{agentId}/preset-questions"""
     agent = await AgentService.get_agent(db, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")
     try:
+        questions_data = [q.model_dump(by_alias=True) for q in body.questions]
         await AgentPresetQuestionService.batch_save(db, agent_id, questions_data)
         return {"success": True, "message": "预设问题保存成功", "data": None}
     except Exception as e:
@@ -58,7 +61,7 @@ async def delete_preset_question(
     question_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """删除指定预设问题 — 对齐 Java deletePresetQuestion"""
+    """删除指定预设问题 — 对齐 Java DELETE /{agentId}/preset-questions/{questionId}"""
     agent = await AgentService.get_agent(db, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")

@@ -24,11 +24,11 @@ class Agent(Base):
     avatar: Mapped[Optional[str]] = mapped_column(String(255), comment="头像URL")
     tags: Mapped[Optional[str]] = mapped_column(String(500), comment="标签，逗号分隔")
     api_key: Mapped[Optional[str]] = mapped_column(String(64), comment="API Key")
-    api_key_enabled: Mapped[bool] = mapped_column(default=False, comment="API Key是否启用")
+    api_key_enabled: Mapped[int] = mapped_column(Integer, default=0, comment="API Key是否启用: 0/1")
     prompt: Mapped[Optional[str]] = mapped_column(Text, comment="Agent自定义Prompt")
     category: Mapped[Optional[str]] = mapped_column(String(100), comment="分类")
     admin_id: Mapped[Optional[int]] = mapped_column(Integer, comment="管理员ID")
-    human_review_enabled: Mapped[bool] = mapped_column(default=False, comment="是否启用人工审核")
+    human_review_enabled: Mapped[int] = mapped_column(Integer, default=0, comment="是否启用人工审核: 0/1")
 
     # 时间戳
     created_at: Mapped[datetime] = mapped_column(

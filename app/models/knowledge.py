@@ -1,7 +1,7 @@
 """
 Knowledge ORM 模型
 """
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, JSON, BigInteger
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON, BigInteger
 from sqlalchemy.sql import func
 from ..core.database import Base
 
@@ -21,7 +21,7 @@ class Knowledge(Base):
     embedding_status = Column(String(20), default="PENDING", comment="向量化状态: PENDING/PROCESSING/COMPLETED/FAILED（对齐Java）")
     error_msg = Column(Text, comment="操作失败的错误信息（对齐Java）")
     metadata_ = Column("metadata", JSON, comment="元数据")
-    enabled = Column(Boolean, default=True, nullable=False, comment="是否启用")
+    enabled = Column(Integer, default=1, nullable=False, comment="是否启用: 0/1")
 
     # 文件管理字段（对齐Java）
     source_filename = Column(String(255), comment="源文件名（对齐Java）")

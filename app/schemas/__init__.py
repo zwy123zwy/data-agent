@@ -5,7 +5,7 @@ Schemas 模块
 from .agent import AgentCreate, AgentUpdate, AgentResponse
 from .datasource import DatasourceCreate, DatasourceUpdate, DatasourceResponse
 from .agent_datasource import AgentDatasourceCreate, AgentDatasourceResponse
-from .knowledge import KnowledgeCreate, KnowledgeUpdate, KnowledgeResponse
+from .knowledge import KnowledgeCreateRequest, KnowledgeUpdateRequest, KnowledgeResponse, KnowledgeQueryRequest
 from .semantic_model import SemanticModelCreate, SemanticModelUpdate, SemanticModelResponse
 from .query_plan import QueryPlanCreate, QueryPlanResponse
 from .model_config import ModelConfigCreate, ModelConfigUpdate, ModelConfigResponse, ModelTestRequest
@@ -20,7 +20,7 @@ __all__ = [
     # AgentDatasource
     "AgentDatasourceCreate", "AgentDatasourceResponse",
     # Knowledge
-    "KnowledgeCreate", "KnowledgeUpdate", "KnowledgeResponse",
+    "KnowledgeCreateRequest", "KnowledgeUpdateRequest", "KnowledgeResponse", "KnowledgeQueryRequest",
     # SemanticModel
     "SemanticModelCreate", "SemanticModelUpdate", "SemanticModelResponse",
     # QueryPlan

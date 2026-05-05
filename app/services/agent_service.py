@@ -128,7 +128,7 @@ class AgentService(BaseService[Agent]):
         api_key = AgentService._generate_api_key()
         return await AgentService.update(db, agent_id, {
             "api_key": api_key,
-            "api_key_enabled": True,
+            "api_key_enabled": 1,
         })
 
     @staticmethod
@@ -137,7 +137,7 @@ class AgentService(BaseService[Agent]):
         api_key = AgentService._generate_api_key()
         return await AgentService.update(db, agent_id, {
             "api_key": api_key,
-            "api_key_enabled": True,
+            "api_key_enabled": 1,
         })
 
     @staticmethod
@@ -145,10 +145,10 @@ class AgentService(BaseService[Agent]):
         """删除 API Key — 对齐 Java deleteApiKey"""
         return await AgentService.update(db, agent_id, {
             "api_key": None,
-            "api_key_enabled": False,
+            "api_key_enabled": 0,
         })
 
     @staticmethod
     async def toggle_api_key(db: AsyncSession, agent_id: int, enabled: bool) -> Optional[Agent]:
         """启用/禁用 API Key — 对齐 Java toggleApiKey"""
-        return await AgentService.update(db, agent_id, {"api_key_enabled": enabled})
+        return await AgentService.update(db, agent_id, {"api_key_enabled": 1 if enabled else 0})

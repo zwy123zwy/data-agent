@@ -5,8 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 from ..core.database import get_db
 from ..schemas.business_knowledge import (
-    BusinessKnowledgeCreate,
-    BusinessKnowledgeUpdate,
+    BusinessKnowledgeCreateRequest,
+    BusinessKnowledgeUpdateRequest,
     BusinessKnowledgeResponse,
 )
 from ..services.business_knowledge_service import BusinessKnowledgeService
@@ -44,7 +44,7 @@ async def get_knowledge(id: int, db: AsyncSession = Depends(get_db)):
 
 @router.post("", summary="创建业务知识")
 async def create_knowledge(
-    dto: BusinessKnowledgeCreate,
+    dto: BusinessKnowledgeCreateRequest,
     db: AsyncSession = Depends(get_db),
 ):
     """创建业务知识 — 对齐 Java POST /api/business-knowledge"""
@@ -55,7 +55,7 @@ async def create_knowledge(
 @router.put("/{id}", summary="更新业务知识")
 async def update_knowledge(
     id: int,
-    dto: BusinessKnowledgeUpdate,
+    dto: BusinessKnowledgeUpdateRequest,
     db: AsyncSession = Depends(get_db),
 ):
     """更新业务知识 — 对齐 Java PUT /api/business-knowledge/{id}"""
@@ -77,7 +77,7 @@ async def delete_knowledge(id: int, db: AsyncSession = Depends(get_db)):
 @router.post("/recall/{id}", summary="切换召回状态")
 async def recall_knowledge(
     id: int,
-    isRecall: bool = Query(..., alias="isRecall", description="是否召回"),
+    isRecall: int = Query(..., alias="isRecall", description="是否召回: 1=是, 0=否"),
     db: AsyncSession = Depends(get_db),
 ):
     """切换召回状态 — 对齐 Java POST /api/business-knowledge/recall/{id}?isRecall="""
