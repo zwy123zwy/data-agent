@@ -1,6 +1,5 @@
 """
-AgentKnowledge API — 对齐 Java AgentKnowledgeController (7 个端点)
-路由前缀: /api/agent-knowledge
+智能体知识库相关接口
 """
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
@@ -15,6 +14,7 @@ from ..schemas.knowledge import (
     KnowledgeResponse,
     KnowledgeQueryRequest,
     KnowledgeUpdateRequest,
+    KnowledgeSearchRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api/agent-knowledge", tags=["AgentKnowledge"])
 
 @router.get("/{id}", summary="获取知识详情")
 async def get_knowledge(id: int, db: AsyncSession = Depends(get_db)):
-    """获取知识详情 — 对齐 Java GET /api/agent-knowledge/{id}"""
+    
     try:
         knowledge = await KnowledgeService.get_knowledge(db, id)
         if not knowledge:
@@ -46,7 +46,6 @@ async def create_knowledge(
     splitterType: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
 ):
-    """创建知识 — 对齐 Java POST /api/agent-knowledge/create (multipart/form-data)"""
     try:
         agent = await AgentService.get_agent(db, int(agentId))
         if not agent:
@@ -108,7 +107,7 @@ async def update_knowledge(
     dto: KnowledgeUpdateRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """更新知识 — 对齐 Java PUT /api/agent-knowledge/{id}"""
+
     existing = await KnowledgeService.get_knowledge(db, id)
     if not existing:
         return {"success": False, "message": "知识不存在"}
@@ -122,11 +121,11 @@ async def update_knowledge(
 @router.put("/recall/{id}", summary="切换召回状态")
 async def update_recall_status(
     id: int,
-    isRecall: int = Query(..., description="是否召回: 1=是, 0=否"),
+    isRecall: bool = Query(..., description="是否召回: true=是, false=否"),
     db: AsyncSession = Depends(get_db),
 ):
-    """切换召回状态 — 对齐 Java PUT /api/agent-knowledge/recall/{id}"""
-    knowledge = await KnowledgeService.update_recall_status(db, id, isRecall)
+    """切换召回状态 — 对齐 Java PUT /api/agent-knowledge/recall/{id} (isRecall=Boolean)"""
+    knowledge = await KnowledgeService.update_recall_status(db, id, 1 if isRecall else 0)
     if not knowledge:
         return {"success": False, "message": "知识不存在"}
     return {"success": True, "message": "更新成功", "data": KnowledgeResponse.model_validate(knowledge).model_dump(by_alias=True)}
@@ -134,7 +133,7 @@ async def update_recall_status(
 
 @router.delete("/{id}", summary="删除知识")
 async def delete_knowledge(id: int, db: AsyncSession = Depends(get_db)):
-    """删除知识 — 对齐 Java DELETE /api/agent-knowledge/{id}"""
+    
     ok = await KnowledgeService.delete_knowledge(db, id)
     if ok:
         return {"success": True, "message": "删除操作已接收，等待后台删除相关资源..."}
@@ -143,7 +142,7 @@ async def delete_knowledge(id: int, db: AsyncSession = Depends(get_db)):
 
 @router.post("/query/page", summary="分页查询知识")
 async def query_page(dto: KnowledgeQueryRequest, db: AsyncSession = Depends(get_db)):
-    """分页查询 — 对齐 Java POST /api/agent-knowledge/query/page"""
+
     try:
         items, total, page_num, page_size, total_pages = await KnowledgeService.query_page(db, dto)
         return {
@@ -161,8 +160,19 @@ async def query_page(dto: KnowledgeQueryRequest, db: AsyncSession = Depends(get_
 
 @router.post("/retry-embedding/{id}", summary="重试向量化")
 async def retry_embedding(id: int, db: AsyncSession = Depends(get_db)):
-    """重试向量化 — 对齐 Java POST /api/agent-knowledge/retry-embedding/{id}"""
+
     knowledge = await KnowledgeService.retry_embedding(db, id)
     if not knowledge:
         return {"success": False, "message": "知识不存在"}
     return {"success": True, "message": "重试向量化操作成功，如果是文件解析需要花费点时间，请耐心等待...", "data": KnowledgeResponse.model_validate(knowledge).model_dump(by_alias=True)}
+
+
+@router.post("/search", summary="向量检索知识")
+async def search_knowledge(dto: KnowledgeSearchRequest, agentId: int = Query(..., description="Agent ID"), db: AsyncSession = Depends(get_db)):
+
+    try:
+        results = await KnowledgeService.search_knowledge(db, agentId, dto)
+        return {"success": True, "data": [r.model_dump() for r in results]}
+    except Exception as e:
+        logger.error("向量检索失败：%s", e)
+        return {"success": False, "message": f"检索失败：{e}", "data": []}

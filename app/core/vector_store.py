@@ -35,7 +35,6 @@
   - Redis: 内存级速度
 """
 import chromadb
-from chromadb.config import Settings
 from typing import List, Dict, Any, Optional
 from openai import AsyncOpenAI
 from .config import settings
@@ -54,18 +53,16 @@ class VectorStore:
     """
 
     def __init__(self):
-        """初始化 Chroma 客户端 + OpenAI Embedding 客户端"""
-        self.client = chromadb.Client(Settings(
-            persist_directory="./chroma_db",
-            anonymized_telemetry=False
-        ))
+        """初始化 Chroma 客户端 + Embedding 客户端 (Ollama/OpenAI 兼容)"""
+        self.client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
 
         self.openai_client = AsyncOpenAI(
-            api_key=settings.openai_api_key,
-            base_url=settings.openai_api_base
+            api_key=settings.embedding_api_key,
+            base_url=settings.embedding_api_base
         )
 
-        logger.info("VectorStore initialized with Chroma")
+        logger.info("VectorStore initialized with Chroma + embedding=%s @ %s",
+                     settings.embedding_model, settings.embedding_api_base)
 
     async def generate_embedding(self, text: str) -> List[float]:
         """
@@ -79,7 +76,7 @@ class VectorStore:
         """
         try:
             response = await self.openai_client.embeddings.create(
-                model="text-embedding-3-small",
+                model=settings.embedding_model,
                 input=text
             )
             return response.data[0].embedding

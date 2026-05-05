@@ -1,18 +1,34 @@
 """BusinessKnowledgeService — 对齐 Java BusinessKnowledgeService"""
+import logging
 from typing import Optional, List
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..models.business_knowledge import BusinessKnowledge
 from ..schemas.business_knowledge import BusinessKnowledgeCreateRequest, BusinessKnowledgeUpdateRequest, BusinessKnowledgeResponse
+from ..core.vector_store import get_vector_store
+
+logger = logging.getLogger(__name__)
 
 
 class BusinessKnowledgeService:
 
     @staticmethod
+    def _get_collection_name(agent_id: int) -> str:
+        return f"agent_{agent_id}_business_knowledge"
+
+    @staticmethod
+    def _build_embedding_text(business_term: str, synonyms: Optional[str], description: Optional[str]) -> str:
+        parts = [business_term]
+        if synonyms:
+            parts.append(synonyms)
+        if description:
+            parts.append(description)
+        return "\n".join(parts)
+
+    @staticmethod
     async def list_by_agent(
         db: AsyncSession, agent_id: int, keyword: Optional[str] = None
     ) -> List[BusinessKnowledgeResponse]:
-        """列出 Agent 的业务知识，支持关键词搜索"""
         query = select(BusinessKnowledge).where(
             and_(
                 BusinessKnowledge.agent_id == agent_id,
@@ -49,6 +65,27 @@ class BusinessKnowledgeService:
         )
         db.add(bk)
         await db.flush()
+
+        # 向量化
+        try:
+            vs = get_vector_store()
+            text = BusinessKnowledgeService._build_embedding_text(
+                dto.business_term, dto.synonyms, dto.description
+            )
+            await vs.add_document(
+                collection_name=BusinessKnowledgeService._get_collection_name(dto.agent_id),
+                doc_id=f"bk_{bk.id}",
+                text=text,
+                metadata={"bk_id": bk.id, "business_term": dto.business_term}
+            )
+            bk.embedding_status = "COMPLETED"
+            logger.info("BusinessKnowledge %d embedded successfully", bk.id)
+        except Exception as e:
+            bk.embedding_status = "FAILED"
+            bk.error_msg = str(e)
+            logger.error("BusinessKnowledge %d embedding failed: %s", bk.id, e)
+
+        await db.commit()
         await db.refresh(bk)
         return BusinessKnowledgeResponse.model_validate(bk)
 
@@ -62,10 +99,35 @@ class BusinessKnowledgeService:
         bk = result.scalar_one_or_none()
         if not bk:
             return None
+
         update_data = dto.model_dump(exclude_unset=True, by_alias=False)
+        term_changed = "business_term" in update_data
+        desc_changed = "description" in update_data
+        syn_changed = "synonyms" in update_data
+
         for key, value in update_data.items():
             setattr(bk, key, value)
-        await db.flush()
+
+        # 内容变化时更新向量
+        if term_changed or desc_changed or syn_changed:
+            try:
+                vs = get_vector_store()
+                text = BusinessKnowledgeService._build_embedding_text(
+                    bk.business_term, bk.synonyms, bk.description
+                )
+                await vs.update_document(
+                    collection_name=BusinessKnowledgeService._get_collection_name(bk.agent_id),
+                    doc_id=f"bk_{bk.id}",
+                    text=text,
+                    metadata={"bk_id": bk.id, "business_term": bk.business_term}
+                )
+                bk.embedding_status = "COMPLETED"
+            except Exception as e:
+                bk.embedding_status = "FAILED"
+                bk.error_msg = str(e)
+                logger.error("BusinessKnowledge %d update embedding failed: %s", bk.id, e)
+
+        await db.commit()
         await db.refresh(bk)
         return BusinessKnowledgeResponse.model_validate(bk)
 
@@ -79,8 +141,20 @@ class BusinessKnowledgeService:
         bk = result.scalar_one_or_none()
         if not bk:
             return False
+
+        # 删除向量
+        try:
+            vs = get_vector_store()
+            vs.delete_document(
+                BusinessKnowledgeService._get_collection_name(bk.agent_id),
+                f"bk_{bk.id}"
+            )
+        except Exception as e:
+            logger.error("Failed to delete vector for bk %d: %s", bk.id, e)
+
         bk.is_deleted = 1
-        await db.flush()
+        bk.is_resource_cleaned = 1
+        await db.commit()
         return True
 
     @staticmethod
@@ -94,7 +168,7 @@ class BusinessKnowledgeService:
         if not bk:
             return False
         bk.is_recall = is_recall
-        await db.flush()
+        await db.commit()
         return True
 
     @staticmethod
@@ -107,9 +181,27 @@ class BusinessKnowledgeService:
         bk = result.scalar_one_or_none()
         if not bk:
             return False
-        bk.embedding_status = "PENDING"
-        bk.error_msg = None
-        await db.flush()
+
+        try:
+            vs = get_vector_store()
+            text = BusinessKnowledgeService._build_embedding_text(
+                bk.business_term, bk.synonyms, bk.description
+            )
+            await vs.add_document(
+                collection_name=BusinessKnowledgeService._get_collection_name(bk.agent_id),
+                doc_id=f"bk_{bk.id}",
+                text=text,
+                metadata={"bk_id": bk.id, "business_term": bk.business_term}
+            )
+            bk.embedding_status = "COMPLETED"
+            bk.error_msg = None
+            logger.info("BusinessKnowledge %d retry embedding succeeded", bk.id)
+        except Exception as e:
+            bk.embedding_status = "FAILED"
+            bk.error_msg = str(e)
+            logger.error("BusinessKnowledge %d retry embedding failed: %s", bk.id, e)
+
+        await db.commit()
         return True
 
     @staticmethod
@@ -122,8 +214,31 @@ class BusinessKnowledgeService:
                 )
             )
         )
-        for bk in result.scalars().all():
-            bk.embedding_status = "PENDING"
-            bk.error_msg = None
-        await db.flush()
+        rows = list(result.scalars().all())
+        if not rows:
+            return True
+
+        vs = get_vector_store()
+        collection_name = BusinessKnowledgeService._get_collection_name(agent_id)
+
+        for bk in rows:
+            try:
+                text = BusinessKnowledgeService._build_embedding_text(
+                    bk.business_term, bk.synonyms, bk.description
+                )
+                await vs.add_document(
+                    collection_name=collection_name,
+                    doc_id=f"bk_{bk.id}",
+                    text=text,
+                    metadata={"bk_id": bk.id, "business_term": bk.business_term}
+                )
+                bk.embedding_status = "COMPLETED"
+                bk.error_msg = None
+            except Exception as e:
+                bk.embedding_status = "FAILED"
+                bk.error_msg = str(e)
+                logger.error("BusinessKnowledge %d refresh embedding failed: %s", bk.id, e)
+
+        await db.commit()
+        logger.info("Refreshed vector store for agent %d: %d items", agent_id, len(rows))
         return True

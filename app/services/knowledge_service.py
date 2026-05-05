@@ -83,6 +83,12 @@ class KnowledgeService:
             title=knowledge_data.title,
             content=knowledge_data.content,
             type=knowledge_data.type,
+            question=knowledge_data.question,
+            source_filename=knowledge_data.source_filename,
+            file_path=knowledge_data.file_path,
+            file_size=knowledge_data.file_size,
+            file_type=knowledge_data.file_type,
+            splitter_type=knowledge_data.splitter_type,
             metadata_=knowledge_data.metadata,
             enabled=knowledge_data.enabled
         )

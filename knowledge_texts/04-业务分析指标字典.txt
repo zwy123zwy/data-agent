@@ -1,0 +1,61 @@
+标题: 电商核心分析指标字典
+类型: DOCUMENT
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+内容:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+一、GMV (成交总额)
+定义: SUM(fact_orders.actual_amount)
+条件: order_status NOT IN ('cancelled', 'refunded')
+分析维度: 按年/月/季度、按品类、按渠道、按地域
+SQL: SELECT SUM(actual_amount) FROM fact_orders WHERE order_status NOT IN ('cancelled','refunded')
+
+二、客单价 (ARPU)
+定义: GMV / COUNT(DISTINCT customer_id)
+含义: 每个付费用户的平均消费金额
+SQL: SELECT SUM(actual_amount) / COUNT(DISTINCT customer_id) FROM fact_orders WHERE order_status NOT IN ('cancelled','refunded')
+
+三、折扣率
+定义: SUM(discount_amount) / SUM(total_amount) × 100
+用途: 监控促销力度，大促期间通常20-35%，平日0-15%
+SQL: SELECT ROUND(SUM(discount_amount)/SUM(total_amount)*100,2) FROM fact_orders WHERE order_status NOT IN ('cancelled','refunded')
+
+四、退单率
+定义: COUNT(CASE WHEN order_status='refunded' THEN 1 END) / COUNT(*) × 100
+整体退单率约 8%
+SQL: SELECT ROUND(SUM(CASE WHEN order_status='refunded' THEN 1 ELSE 0 END)/COUNT(*)*100,2) FROM fact_orders
+
+五、转化率 (按渠道)
+定义: fact_traffic.orders_count / fact_traffic.uv × 100
+App渠道约5%，PC渠道约1.5%
+SQL: SELECT ch.name, ROUND(SUM(t.orders_count)/SUM(t.uv)*100,2) AS cvr
+FROM fact_traffic t JOIN dim_channel ch ON t.channel_id = ch.id GROUP BY ch.id, ch.name
+
+六、营销ROI
+定义: fact_marketing.revenue / fact_marketing.spend
+ROI > 3 为高效，ROI < 1 为亏损
+SQL: SELECT campaign_name, ROUND(SUM(revenue)/SUM(spend),2) AS roi
+FROM fact_marketing GROUP BY campaign_name ORDER BY roi DESC
+
+七、连带率 (平均每单商品数)
+定义: COUNT(fact_order_items.id) / COUNT(DISTINCT fact_order_items.order_id)
+SQL: SELECT COUNT(*) * 1.0 / COUNT(DISTINCT order_id) FROM fact_order_items
+
+八、复购率
+定义: 有≥2次购买的用户数 / 总购买用户数 × 100
+SQL: SELECT ROUND(SUM(CASE WHEN cnt>=2 THEN 1 ELSE 0 END)/COUNT(*)*100,2)
+FROM (SELECT customer_id, COUNT(*) AS cnt FROM fact_orders
+WHERE order_status NOT IN ('cancelled','refunded') GROUP BY customer_id) t
+
+九、RFM 用户分层
+R(最近一次购买距今天数): DATEDIFF(NOW(), MAX(order_time))
+F(购买频次): COUNT(DISTINCT order_id)
+M(消费金额): SUM(actual_amount)
+用途: 按R/F/M分值将用户分为高价值/保持/发展/挽留/流失五类
+
+十、商品贡献度 (ABC分析)
+A类(前20%商品): 贡献60%销售额
+B类(中间30%商品): 贡献25%销售额
+C类(后50%商品): 贡献15%销售额
+SQL: 使用 PERCENT_RANK() 窗口函数排序后分段

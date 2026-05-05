@@ -1,0 +1,64 @@
+Agent 3 电商销售分析数据库基于星型模型设计，共 10 张表，时间跨度 2024-2025。
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+一、维度表 (6张)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. dim_date — 日期维度 (约730行)
+字段: id(YYYYMMDD格式), full_date, year, quarter, month, day, week_of_year, day_of_week(1=周一), is_weekend(0/1), is_holiday(0/1), holiday_name, month_name
+用途: 支撑同比环比、工作日vs周末、节假日效应、季节性分析
+
+2. dim_category — 商品类目维度，3级树 (约25行)
+字段: id, name, parent_id(NULL=一级类目), level(1/2/3), sort_order
+自引用: parent_id 指向本表 id，实现类目层级下钻
+一级类目: 服饰鞋包、数码家电、美妆个护、食品饮料、家居生活、运动户外
+
+3. dim_product — 商品维度 (约50行)
+字段: id, name, category_id(→dim_category.id), brand, unit_price, cost_price, is_active(1=在售), launch_date
+用途: 商品贡献度分析、价格带分析、新品vs旧品对比
+
+4. dim_customer — 客户维度 (约500行)
+字段: id, name, gender(male/female), age_group(18-24/25-34/35-44/45-54/55+), city, province, region(华北/华东/华南/华中/西南/西北/东北), register_channel(App/PC/H5/MiniProgram), member_tier(normal/silver/gold/platinum), register_date
+用途: RFM用户分层、地域分布、渠道归因、人群画像
+
+5. dim_channel — 渠道维度 (6行)
+字段: id, name(App/PC/H5/MiniProgram/线下门店/其他), type(online/offline), description
+用途: 多渠道对比、转化漏斗、渠道ROI
+
+6. dim_payment — 支付方式维度 (5行)
+字段: id, name(微信支付/支付宝/银行卡/信用卡/货到付款)
+用途: 支付偏好分析
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+二、事实表 (4张)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+7. fact_orders — 订单事实表 (约3000行，核心销售表)
+字段: id, order_no(ORD+年月日+序号), customer_id(→dim_customer.id), order_date_id(→dim_date.id), channel_id(→dim_channel.id), payment_id(→dim_payment.id), total_amount(原价合计), discount_amount(折扣金额), actual_amount(实付=total-discount), order_status(pending/paid/shipped/completed/cancelled/refunded), shipping_city, shipping_province, order_time, pay_time, delivery_days
+重要: actual_amount = total_amount - discount_amount
+状态流转: pending → paid → shipped → completed (正常) / cancelled (取消) / refunded (退款)
+数据分析时必须过滤 cancelled 和 refunded 状态
+
+8. fact_order_items — 订单明细事实表 (约6000行)
+字段: id, order_id(→fact_orders.id), product_id(→dim_product.id), quantity(购买数量), unit_price(成交单价), subtotal(小计=quantity×unit_price)
+每个订单对应 1-5 条明细
+
+9. fact_traffic — 流量事实表 (约4380行，6渠道×730天)
+字段: id, date_id(→dim_date.id), channel_id(→dim_channel.id), uv(独立访客), pv(页面浏览), avg_duration_sec(平均停留秒数), bounce_rate(跳出率%), orders_count(当日下单数), order_amount(当日下单金额)
+用途: 漏斗分析(UV→下单→支付)、渠道效率对比
+
+10. fact_marketing — 营销投放事实表 (约200行)
+字段: id, date_id(→dim_date.id), channel_id(→dim_channel.id), campaign_name(活动名称), spend(投放花费), impressions(曝光量), clicks(点击量), conversions(转化数), revenue(转化收入)
+用途: ROI分析、渠道性价比、活动效果评估
+ROI = revenue / spend，>3为高效，<1为亏损
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+三、数据特征
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- 季节性: 11-12月销售额比2-3月高50%
+- 地域差异: 华东贡献40% GMV，华南25%
+- 用户分级: platinum 5%人数但贡献25% GMV
+- 折扣规律: 大促期间折扣率20-35%，平日0-15%
+- 渠道效率: App转化率5%，PC仅1.5%
+- 退单率: 整体约8%
+- 长尾效应: 前20%商品贡献60%销售额

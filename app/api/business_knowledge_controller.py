@@ -77,11 +77,11 @@ async def delete_knowledge(id: int, db: AsyncSession = Depends(get_db)):
 @router.post("/recall/{id}", summary="切换召回状态")
 async def recall_knowledge(
     id: int,
-    isRecall: int = Query(..., alias="isRecall", description="是否召回: 1=是, 0=否"),
+    isRecall: bool = Query(..., alias="isRecall", description="是否召回: true=是, false=否"),
     db: AsyncSession = Depends(get_db),
 ):
-    """切换召回状态 — 对齐 Java POST /api/business-knowledge/recall/{id}?isRecall="""
-    ok = await BusinessKnowledgeService.set_recall(db, id, isRecall)
+    """切换召回状态 — 对齐 Java POST /api/business-knowledge/recall/{id}?isRecall= (Boolean)"""
+    ok = await BusinessKnowledgeService.set_recall(db, id, 1 if isRecall else 0)
     if not ok:
         return {"success": False, "message": "businessKnowledge not found"}
     return {"success": True, "message": "success update recall businessKnowledge"}

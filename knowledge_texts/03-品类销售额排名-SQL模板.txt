@@ -1,0 +1,52 @@
+标题: 品类销售额排名与贡献度分析
+类型: QA
+问题: 哪个品类销售额最高
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+回答内容:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+品类排名需要 3 表 JOIN: fact_order_items → dim_product → dim_category + fact_orders 过滤有效订单。
+
+基础排名 SQL:
+SELECT c.name AS category, SUM(oi.subtotal) AS sales
+FROM fact_order_items oi
+JOIN dim_product p ON oi.product_id = p.id
+JOIN dim_category c ON p.category_id = c.id
+JOIN fact_orders o ON oi.order_id = o.id
+WHERE o.order_status NOT IN ('cancelled', 'refunded')
+GROUP BY c.id, c.name
+ORDER BY sales DESC
+
+只看一级类目 (level=1):
+SELECT c.name AS category, SUM(oi.subtotal) AS sales
+FROM fact_order_items oi
+JOIN dim_product p ON oi.product_id = p.id
+JOIN dim_category c ON p.category_id = c.id
+JOIN fact_orders o ON oi.order_id = o.id
+WHERE o.order_status NOT IN ('cancelled', 'refunded') AND c.level = 1
+GROUP BY c.id, c.name
+ORDER BY sales DESC
+
+某类目下钻到子类目 (parent_id):
+SELECT c.name AS sub_category, SUM(oi.subtotal) AS sales
+FROM fact_order_items oi
+JOIN dim_product p ON oi.product_id = p.id
+JOIN dim_category c ON p.category_id = c.id
+JOIN fact_orders o ON oi.order_id = o.id
+WHERE o.order_status NOT IN ('cancelled', 'refunded') AND c.parent_id = 某类目ID
+GROUP BY c.id, c.name
+ORDER BY sales DESC
+
+品类贡献度 (占比):
+SELECT c.name, SUM(oi.subtotal) AS sales,
+  ROUND(SUM(oi.subtotal) / (SELECT SUM(subtotal) FROM fact_order_items oi2
+    JOIN fact_orders o2 ON oi2.order_id = o2.id
+    WHERE o2.order_status NOT IN ('cancelled','refunded')) * 100, 2) AS pct
+FROM fact_order_items oi
+JOIN dim_product p ON oi.product_id = p.id
+JOIN dim_category c ON p.category_id = c.id
+JOIN fact_orders o ON oi.order_id = o.id
+WHERE o.order_status NOT IN ('cancelled', 'refunded')
+GROUP BY c.id, c.name
+ORDER BY sales DESC

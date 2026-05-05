@@ -119,12 +119,21 @@ class Settings(BaseSettings):
     # 数据库 — 被 core/database.py 读取
     database_url: str = "mysql+aiomysql://root:123456@localhost:3306/dataagent"
 
-    # LLM — 被 core/llm.py 读取
+    # LLM (Chat) — 被 core/llm.py 读取
     openai_api_key: str = ""
     openai_api_base: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4"
     openai_temperature: float = 0.0
     llm_service_type: str = "stream"  # stream / block
+
+    # Embedding — 被 core/vector_store.py 读取 (Ollama bge-m3)
+    embedding_api_key: str = "ollama"
+    embedding_api_base: str = "http://localhost:11434/v1"
+    embedding_model: str = "bge-m3"
+
+    # Chroma 向量库 — Docker 实例
+    chroma_host: str = "localhost"
+    chroma_port: int = 8000
 
     # 服务 — 被 main.py 读取
     host: str = "0.0.0.0"
