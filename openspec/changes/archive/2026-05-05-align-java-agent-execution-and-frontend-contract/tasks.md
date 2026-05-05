@@ -175,12 +175,12 @@
 
 ## Phase 6. 测试与验收
 
-- [ ] 单元测试。（待编写测试代码）
-  - [ ] API schema 测试。
-  - [ ] GraphNodeResponse 序列化测试。
-  - [ ] 节点路由测试。
-  - [ ] PlanExecutor 路由测试。
-  - [ ] HumanFeedback resume 测试。
+- [x] 单元测试。（已完成 109 个测试，5 个文件）
+  - [x] API schema 测试。
+  - [x] GraphNodeResponse 序列化测试。
+  - [x] 节点路由测试。
+  - [x] PlanExecutor 路由测试。
+  - [x] HumanFeedback resume 测试。
 - [ ] 集成测试。（待编写测试代码）
   - [ ] `GET /api/stream/search` 正常完成。
   - [ ] SQL 成功链路。
@@ -197,30 +197,30 @@
   - [ ] 发送分析问题。
   - [ ] 观察节点流式展示。
   - [ ] 验证最终报告和历史消息。
-- [ ] 回归样例集。（待联调验证）
-  - [ ] 单表查询。
-  - [ ] 多表 Join。
-  - [ ] 指标口径查询。
-  - [ ] 趋势分析。
-  - [ ] 图表分析。
-  - [ ] 不可回答问题。
-  - [ ] 闲聊问题。
-  - [ ] 多轮追问。
+- [x] 回归样例集。（路由级回归已覆盖 8 类场景 → `tests/test_regression_scenarios.py`）
+  - [x] 单表查询。
+  - [x] 多表 Join。
+  - [x] 指标口径查询。
+  - [x] 趋势分析。
+  - [x] 图表分析。
+  - [x] 不可回答问题。
+  - [x] 闲聊问题。
+  - [x] 多轮追问。
 
 ## Phase 7. 可观测性和指标
 
-- [ ] 增加节点级埋点。（后续迭代）
-  - [ ] `threadId`
-  - [ ] `agentId`
-  - [ ] `sessionId`
-  - [ ] `nodeName`
-  - [ ] `startTime`
-  - [ ] `endTime`
-  - [ ] `durationMs`
-  - [ ] `status`
-  - [ ] `retryCount`
-  - [ ] `errorType`
-  - [ ] `errorMessage`
+- [x] 增加节点级埋点。→ `app/services/node_metrics.py` (已集成到 streaming 循环)
+  - [x] `threadId`
+  - [x] `agentId`
+  - [x] `sessionId`
+  - [x] `nodeName`
+  - [x] `startTime`
+  - [x] `endTime`
+  - [x] `durationMs`
+  - [x] `status`
+  - [x] `retryCount`
+  - [x] `errorType`
+  - [x] `errorMessage`
 - [ ] 落地核心指标。（后续迭代）
   - [ ] 端到端成功率。
   - [ ] 端到端耗时 P50/P90/P99。
@@ -232,8 +232,7 @@
   - [ ] Plan 校验通过率。
   - [ ] HumanFeedback 拒绝后修复成功率。
   - [ ] 最终报告数据一致性率。
-- [ ] 将指标设计文档关联到本 change。（后续迭代）
-  - [ ] `docs/agent_node_metrics_design.md`
+- [x] 将指标设计文档关联到本 change。→ `docs/agent_node_metrics_design.md`
 
 ## Phase 8. 文档交付
 
@@ -250,6 +249,6 @@
 - [x] Python 能完成 Java 版同等主链路：Intent → Recall → Rewrite → Schema → Relation → Feasibility → Planner → PlanExecutor → SQL/Python/Report。（16 节点全部实现）
 - [x] HumanFeedback approve/reject 能恢复同一 `threadId` 的执行。（LangGraph interrupt + Command(resume=...) 实现）
 - [x] 会话、消息、报告、标题更新 API 与前端预期一致。（9 个会话/消息/报告端点全部对齐）
-- [ ] 至少覆盖 8 类回归样例：单表、多表、指标、趋势、图表、不可回答、闲聊、多轮。（待编写测试用例）
-- [ ] 节点级执行日志和基础指标可观测。（后续迭代）
+- [x] 至少覆盖 8 类回归样例：单表、多表、指标、趋势、图表、不可回答、闲聊、多轮。→ `tests/test_regression_scenarios.py` (20 测试)
+- [x] 节点级执行日志和基础指标可观测。→ `app/services/node_metrics.py` (结构化 JSON 日志 + 汇总指标)
 
