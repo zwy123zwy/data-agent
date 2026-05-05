@@ -44,7 +44,7 @@ async def save_preset_questions(
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")
     try:
-        questions_data = [q.model_dump(by_alias=True) for q in body.questions]
+        questions_data = [q.model_dump() for q in body.questions]
         await AgentPresetQuestionService.batch_save(db, agent_id, questions_data)
         return {"success": True, "message": "预设问题保存成功", "data": None}
     except Exception as e:
