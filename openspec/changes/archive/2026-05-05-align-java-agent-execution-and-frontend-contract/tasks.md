@@ -126,10 +126,10 @@
 - [x] SSE 暂停事件兼容前端。
   - [x] 前端能识别需要展示 HumanFeedback 组件。
   - [x] Python 若使用 `paused` event，应同时提供 Java 兼容节点输出或前端适配。
-- [ ] 增加 HumanFeedback 回归测试。
-  - [ ] approve 场景。
-  - [ ] reject 后重规划场景。
-  - [ ] reject 超限场景。
+- [x] 增加 HumanFeedback 回归测试。
+  - [x] approve 场景。
+  - [x] reject 后重规划场景。
+  - [x] reject 超限场景。
 
 ## Phase 4. 会话和前后端协同对齐
 
@@ -181,14 +181,14 @@
   - [x] 节点路由测试。
   - [x] PlanExecutor 路由测试。
   - [x] HumanFeedback resume 测试。
-- [ ] 集成测试。（待编写测试代码）
-  - [ ] `GET /api/stream/search` 正常完成。
-  - [ ] SQL 成功链路。
-  - [ ] SQL 失败重试链路。
-  - [ ] Python 成功链路。
-  - [ ] HumanFeedback approve 链路。
-  - [ ] HumanFeedback reject 链路。
-  - [ ] 前端保存消息链路。
+- [x] 集成测试。（已编写 test_integration_stream.py 17 个测试 + test_human_feedback_regression.py 11 个测试）
+  - [x] `GET /api/stream/search` 正常完成。
+  - [x] SQL 成功链路。
+  - [x] SQL 失败重试链路。
+  - [x] Python 成功链路。
+  - [x] HumanFeedback approve 链路。
+  - [x] HumanFeedback reject 链路。
+  - [x] 前端保存消息链路。
 - [ ] 端到端测试。（需启动前端+后端联调）
   - [ ] 启动前端 + Python 后端。
   - [ ] 创建 Agent。
