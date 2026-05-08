@@ -471,6 +471,11 @@ async def stream_workflow_execution(
                         yield _format_sse_data(_build_graph_response(
                             agent_id, thread_id, java_name, text, TEXT_TYPE_JSON
                         ))
+                        # 发送 paused 事件 — 前端据此区分「正常暂停」和「连接异常断开」
+                        # 前端 graph.ts 通过 addEventListener('paused', ...) 接收
+                        yield _format_sse_event("paused", _build_graph_response(
+                            agent_id, thread_id, java_name, "", TEXT_TYPE_TEXT
+                        ))
                         m.finish("paused")
                         m.log()
                         tracker.log_summary()

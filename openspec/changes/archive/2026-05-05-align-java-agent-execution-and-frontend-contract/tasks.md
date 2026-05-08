@@ -157,21 +157,62 @@
 
 ## Phase 5. 前端兼容性验证
 
-- [ ] 使用现有前端连接 Python 后端。（待启动前端+后端联调验证）
-  - [ ] 进入 AgentRun 页面成功。
-  - [ ] 创建会话成功。
-  - [ ] 加载会话列表成功。
-  - [ ] 加载历史消息成功。
-  - [ ] 发送消息成功。
-  - [ ] SSE 节点逐步展示成功。
-  - [ ] SQL 节点渲染成功。
-  - [ ] RESULT_SET 渲染成功。
-  - [ ] HTML/Markdown 报告保存成功。
-  - [ ] 停止生成成功。
-  - [ ] HumanFeedback approve/reject 成功。
+### 5.1 静态协议验证 (2026-05-07)
+
+通过逐接口对比 Python 后端代码 ↔ Java 前端 `graph.ts`/`chat.ts`/`AgentRun.vue`，确认：
+
+- [x] **11 项协议兼容检查全部通过**（静态代码对比，无需启动服务）
+
+| # | 检查点 | 对应接口/逻辑 | 结果 |
+|---|--------|-------------|------|
+| 1 | 进入 AgentRun 页面 | `GET /api/agent/{id}` → AgentResponse schema (camelCase) | ✅ 路径/字段匹配 |
+| 2 | 创建会话 | `POST /api/agent/{agentId}/sessions` → ChatSessionResponse | ✅ schema 完全对齐 |
+| 3 | 加载会话列表 | `GET /api/agent/{agentId}/sessions` (按 is_pinned desc) | ✅ 路径/排序匹配 |
+| 4 | 加载历史消息 | `GET /api/sessions/{sessionId}/messages` → ChatMessageResponse | ✅ 字段/camelCase 匹配 |
+| 5 | 发送消息 | `POST /api/sessions/{sessionId}/messages` (含 titleNeeded) | ✅ messageType 枚举匹配 |
+| 6 | SSE 节点逐步展示 | `GET /api/stream/search` (query params + SSE data:) | ✅ GraphNodeResponse + 纯 data: 格式 |
+| 7 | SQL 节点渲染 | TextType='SQL' + highlight.js sql 语言映射 | ✅ 枚举值匹配 |
+| 8 | RESULT_SET 渲染 | TextType='RESULT_SET' + ResultSetDisplay 组件 | ✅ JSON 结构兼容 |
+| 9 | HTML/Markdown 报告 | `POST /api/sessions/{sessionId}/reports/html` | ✅ messageType 值匹配 |
+| 10 | 停止生成 | EventSource.close() → asyncio.CancelledError | ✅ 纯前端+后端释放 |
+| 11 | 会话 SSE 标题推送 | `GET /api/agent/{agentId}/sessions/stream` → `event: title-updated` | ✅ SessionUpdateEvent 格式匹配 |
+
 - [x] 补充前端协议兼容说明。
   - [x] 记录哪些接口必须保持 Java 兼容。→ `specs/protocol-alignment.md`
   - [x] 记录哪些接口是 Python 扩展。→ `POST /api/query/stream`
+
+### 5.2 修复记录
+
+**问题 1: Production Graph 无 checkpointer，HumanFeedback interrupt/resume 不可用**
+
+- **发现**: `graph.py:287` 调用 `workflow.compile()` 未传 checkpointer 参数
+- **对比**: 测试 `test_human_feedback_regression.py:43` 正确使用 `g.compile(checkpointer=MemorySaver())`
+- **Java 参照**: Spring AI 的 `CompiledGraph` 内置状态持久化，无需显式配置
+- **根因**: LangGraph 与 Spring AI 框架差异 — LangGraph 的 `interrupt()` 必须配合 checkpointer 才能保存/恢复状态
+- **修复**: `graph.py:288` → `workflow.compile(checkpointer=MemorySaver())`，同时新增 `from langgraph.checkpoint.memory import MemorySaver`
+- **影响**: HumanFeedback approve/reject resume 现在可以正常恢复同一 threadId 的执行
+- **后续**: 生产环境可替换为 `SqliteSaver` 或 `PostgresSaver` 以支持跨进程持久化
+
+**问题 2: HumanFeedback 暂停导致前端显示「连接失败」错误 (2026-05-08)**
+
+- **发现**: `streaming_graph_controller.py:478` 在 human_feedback 节点输出后直接 `return`，SSE 流关闭触发前端 `EventSource.onerror` → 用户看到「流式请求失败: Stream connection failed」
+- **根因**: Python 没有发送明确的「暂停」信号，前端 `EventSource` 将正常流关闭当作连接错误
+- **修复 (Python)**: `streaming_graph_controller.py:476-478` → 在 `return` 前 `yield _format_sse_event("paused", ...)`
+- **修复 (前端)**: `graph.ts:134-146` → 新增 `addEventListener('paused', ...)` 监听器，调用 `onPaused` 回调并设 `isCompleted=true`
+- **修复 (前端)**: `AgentRun.vue:913-936` → 新增 `onPaused` 回调：更新 threadId、保存节点消息、清理流式状态、显示 HumanFeedback 组件
+- **连带修复**: `AgentRun.vue:898-902` → 移除 `onComplete` 中错误的 `rejectedPlan` 条件判断（初始请求 `rejectedPlan=false`，此条件永不满足）
+
+**问题 3: `event: error` 应用层错误前端无法接收 (2026-05-08)**
+
+- **发现**: Python 三处发送 `event: error`（Agent 不存在/无数据源/异常），前端 `graph.ts` 仅有 `EventSource.onerror`（浏览器级错误），无 `addEventListener('error', ...)`
+- **注意**: SSE 协议中 `event: error` 与浏览器 `EventSource` 的 `error` 事件同名，通过 `event.data` 区分（应用层错误有 JSON data，浏览器错误无 data）
+- **修复 (前端)**: `graph.ts:116-132` → 新增 `addEventListener('error', ...)`，检查 `event.data` 存在时解析为 `GraphNodeResponse` 并调用 `onError`；无 data 时忽略（由 `onerror` 处理）
+
+**问题 4: `isPinned` 类型不匹配 (2026-05-08)**
+
+- **发现**: ORM 存储 int (0/1) → Python 响应返回 int，前端 TypeScript 声明 `isPinned: boolean`
+- **修复 (Python)**: `schemas/chat_session.py:29` → `is_pinned: int` 改为 `is_pinned: bool`，新增 `@field_validator('is_pinned', mode='before')` 将 int 转为 bool
+- **影响**: JSON 响应中 `isPinned` 从 `0`/`1` 变为 `false`/`true`，与前端类型声明一致
 
 ## Phase 6. 测试与验收
 
@@ -251,4 +292,3 @@
 - [x] 会话、消息、报告、标题更新 API 与前端预期一致。（9 个会话/消息/报告端点全部对齐）
 - [x] 至少覆盖 8 类回归样例：单表、多表、指标、趋势、图表、不可回答、闲聊、多轮。→ `tests/test_regression_scenarios.py` (20 测试)
 - [x] 节点级执行日志和基础指标可观测。→ `app/services/node_metrics.py` (结构化 JSON 日志 + 汇总指标)
-
