@@ -59,6 +59,7 @@ START → IntentRecognition
 """
 from typing import Literal
 from langgraph.graph import StateGraph, END
+from langgraph.checkpoint.memory import MemorySaver
 from .state import WorkflowState
 from .nodes.intent_recognition import intent_recognition_node
 from .nodes.knowledge_recall import knowledge_recall_node
@@ -284,5 +285,7 @@ workflow.add_conditional_edges("human_feedback", route_after_human_feedback, {
 })
 
 # 编译 — 将声明的拓扑编译为可执行的 LangGraph 状态图
-compiled_workflow = workflow.compile()
+# ★ MemorySaver 为 HumanFeedback interrupt/resume 提供状态持久化
+# 生产环境可替换为 SqliteSaver 或 PostgresSaver 以支持跨进程恢复
+compiled_workflow = workflow.compile(checkpointer=MemorySaver())
 logger.info("Workflow compiled: PlanExecutor cycle topology with %d nodes", len(workflow.nodes))

@@ -111,6 +111,7 @@ async def human_feedback_node(state: WorkflowState) -> Dict[str, Any]:
             "human_feedback_data": feedback,
             "human_next_node": "plan_executor",
             "plan_validation_status": True,
+            "human_review_enabled": False,  # 审批通过后禁用复核，防止 plan_executor 循环回到 human_feedback
         }
     else:
         reason = feedback.get("reason", "用户拒绝执行计划")

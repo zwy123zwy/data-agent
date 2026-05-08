@@ -23,9 +23,12 @@ def _make_test_graph():
 
     拓扑:
       START → plan_executor → human_feedback (interrupt)
-        → approve → plan_executor → human_feedback (循环)
+        → approve → plan_executor → (step routing: SQL → END, Report → END)
         → reject  → END
         → max_reject → END
+
+    human_feedback_node.approve 会设置 human_review_enabled=False,
+    之后 plan_executor 会按 step 路由到 SQL/Python/Report 而非回到 human_feedback.
     """
     g = StateGraph(WorkflowState)
     g.add_node("plan_executor", plan_executor_node)
@@ -33,6 +36,9 @@ def _make_test_graph():
     g.set_entry_point("plan_executor")
     g.add_conditional_edges("plan_executor", route_after_plan_executor, {
         "human_feedback": "human_feedback",
+        "sql_generate": END,
+        "python_generate": END,
+        "report_generator": END,
         "end": END,
     })
     g.add_conditional_edges("human_feedback", route_after_human_feedback, {

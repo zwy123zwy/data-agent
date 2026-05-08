@@ -239,6 +239,37 @@ async def stream_workflow_execution(
         tracker = NodeMetricsTracker(thread_id, agent_id)
 
         async for event in compiled_workflow.astream(graph_input, config, stream_mode="updates"):
+            # ★ Handle LangGraph interrupt (HumanFeedback pause)
+            # When human_feedback_node calls interrupt(), LangGraph yields
+            # {"__interrupt__": (Interrupt(value),)} instead of the node output.
+            # We must handle this BEFORE the user_visible_nodes check below.
+            if "__interrupt__" in event:
+                interrupt_data = event["__interrupt__"]
+                interrupt_value = None
+                if isinstance(interrupt_data, (list, tuple)) and len(interrupt_data) > 0:
+                    interrupt_value = interrupt_data[0].value if hasattr(interrupt_data[0], 'value') else interrupt_data[0]
+                elif hasattr(interrupt_data, 'value'):
+                    interrupt_value = interrupt_data.value
+                else:
+                    interrupt_value = interrupt_data
+
+                logger.info(f"[Stream] Interrupt: {interrupt_value}")
+
+                # Send human_feedback node output as SSE data
+                if isinstance(interrupt_value, dict):
+                    java_name = NODE_NAME_MAP.get("human_feedback", "HumanFeedbackNode")
+                    text = json.dumps(interrupt_value, ensure_ascii=False)
+                    yield _format_sse_data(_build_graph_response(
+                        agent_id, thread_id, java_name, text, TEXT_TYPE_JSON
+                    ))
+
+                # Send paused event so frontend knows this is a normal pause, not an error
+                yield _format_sse_event("paused", _build_graph_response(
+                    agent_id, thread_id, NODE_NAME_MAP.get("human_feedback", ""), "", TEXT_TYPE_TEXT
+                ))
+                tracker.log_summary()
+                return
+
             for node_name, node_output in event.items():
                 if node_output is None:
                     logger.warning(f"[Stream] Node {node_name} returned None, skipping")

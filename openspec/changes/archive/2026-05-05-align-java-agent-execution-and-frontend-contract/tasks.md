@@ -214,6 +214,15 @@
 - **修复 (Python)**: `schemas/chat_session.py:29` → `is_pinned: int` 改为 `is_pinned: bool`，新增 `@field_validator('is_pinned', mode='before')` 将 int 转为 bool
 - **影响**: JSON 响应中 `isPinned` 从 `0`/`1` 变为 `false`/`true`，与前端类型声明一致
 
+**问题 5: `__interrupt__` 事件未被 streaming controller 捕获导致 HumanFeedback 不触发 (2026-05-08)**
+
+- **发现**: `human_feedback_node` 调用 LangGraph `interrupt()` 后，LangGraph 通过 `stream_mode="updates"` yield `{"__interrupt__": (Interrupt(value),)}`，但 controller 的 astream 循环将此事件跳过（`__interrupt__` 不在 `user_visible_nodes` 中），导致 astream 自然结束并错误发送 `event: complete`
+- **根因**: `human_review_enabled: True` 实际已正确传递到 state 中（验证日志确认），`plan_executor_node` 也正确路由到 `HUMAN_FEEDBACK_NODE`，但 `interrupt()` 产生的 `__interrupt__` 事件未被 stream mode 处理
+- **修复 (Python)**: `streaming_graph_controller.py:241-271` → 在 `user_visible_nodes` 检查之前新增 `__interrupt__` 事件处理：提取 interrupt value → 作为 `HumanFeedbackNode` SSE data 发送 → 发送 `event: paused` → `return`
+- **修复 (Python)**: `human_feedback_node.py:108-113` → approve 返回时设置 `human_review_enabled: False`，防止 plan_executor 重新路由回 human_feedback 形成无限循环
+- **修复 (测试)**: `test_human_feedback_regression.py:21-38` → 测试图新增 `sql_generate`/`python_generate`/`report_generator` → END 路由，因 approve 后 plan_executor 按步骤路由而非回到 human_feedback
+- **验证**: 11 个 HumanFeedback 回归测试通过；e2e 验证 approve 后正确进入 SQL 生成/执行流程，reject 后正确回到 Planner 重规划并重新暂停
+
 ## Phase 6. 测试与验收
 
 - [x] 单元测试。（已完成 109 个测试，5 个文件）
@@ -230,14 +239,15 @@
   - [x] HumanFeedback approve 链路。
   - [x] HumanFeedback reject 链路。
   - [x] 前端保存消息链路。
-- [ ] 端到端测试。（需启动前端+后端联调）
-  - [ ] 启动前端 + Python 后端。
-  - [ ] 创建 Agent。
-  - [ ] 绑定数据源。
-  - [ ] 配置语义模型和知识。
-  - [ ] 发送分析问题。
-  - [ ] 观察节点流式展示。
-  - [ ] 验证最终报告和历史消息。
+- [x] 端到端测试。（已完成前后端联调 2026-05-08）
+  - [x] 启动前端 (Vite :3000 proxy → :8100) + Python 后端。
+  - [x] 使用已有 Agent 3「电商销售分析助手」(绑定 datasource 10, MySQL agent1 db, 10 表, 含语义模型)。
+  - [x] 正常 SSE 查询：16 节点链路完整通过 (Intent→Recall→Rewrite→Schema→Relation→Feasibility→Planner→PlanExecutor→SQL→Semantic→Execute→Python→Analyze→Report→complete)。
+  - [x] HumanFeedback SSE 查询：暂停 (event: paused) → approve 继续执行 → SQL/Python/Report → complete。
+  - [x] HumanFeedback SSE 查询：暂停 → reject 重规划 → 再次暂停 (reject_count 递增)。
+  - [x] Python 代码执行失败自动重试 (pandas→stdlib fallback) 验证通过。
+  - [x] 验证会话 API、消息 API、报告下载 API、标题更新 SSE 全部通过前端 Vite proxy。
+  - [x] isPinned 类型为 boolean (true/false)，与前端 TypeScript 一致。
 - [x] 回归样例集。（路由级回归已覆盖 8 类场景 → `tests/test_regression_scenarios.py`）
   - [x] 单表查询。
   - [x] 多表 Join。
