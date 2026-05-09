@@ -9,6 +9,7 @@ from ..state import WorkflowState, get_current_step_number
 from ...services.agent_datasource_service import AgentDatasourceService
 from ...core.database import async_session_maker
 from ...core.config import settings
+from ...core.sql_validator import validate_sql_safety
 import logging
 import json
 
@@ -68,6 +69,16 @@ async def sql_execute_node(state: WorkflowState) -> Dict[str, Any]:
 
     current_step = get_current_step_number(state)
     logger.info(f"[SqlExecute] Step {current_step}: executing SQL ({len(sql)} chars)")
+
+    # ★ SQL 安全校验 — 只允许 SELECT/WITH/EXPLAIN 等只读语句
+    safety_error = validate_sql_safety(sql)
+    if safety_error:
+        logger.warning(f"[SqlExecute] SQL rejected by safety validator: {safety_error}")
+        logger.warning(f"[SqlExecute] Rejected SQL: {sql[:200]}")
+        return {
+            "sql_error": f"SQL 安全校验失败: {safety_error}",
+            "sql_regenerate_reason": {"type": "safety", "reason": safety_error},
+        }
 
     try:
         async with async_session_maker() as session:

@@ -60,6 +60,7 @@ START → IntentRecognition
 from typing import Literal
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from .state import WorkflowState
 from .nodes.intent_recognition import intent_recognition_node
 from .nodes.knowledge_recall import knowledge_recall_node
@@ -285,7 +286,23 @@ workflow.add_conditional_edges("human_feedback", route_after_human_feedback, {
 })
 
 # 编译 — 将声明的拓扑编译为可执行的 LangGraph 状态图
-# ★ MemorySaver 为 HumanFeedback interrupt/resume 提供状态持久化
-# 生产环境可替换为 SqliteSaver 或 PostgresSaver 以支持跨进程恢复
-compiled_workflow = workflow.compile(checkpointer=MemorySaver())
+# ★ checkpointer 为 HumanFeedback interrupt/resume 提供状态持久化
+# 通过 settings.checkpointer_type 切换:
+#   "memory" → MemorySaver (进程重启丢失)
+#   "sqlite" → SqliteSaver (持久化到文件, 跨重启恢复)
+
+def _build_checkpointer():
+    """根据配置创建 checkpointer 实例"""
+    if settings.checkpointer_type == "sqlite":
+        # from_conn_string 返回 context manager，手动进入后保持连接
+        _ctx = SqliteSaver.from_conn_string(settings.checkpointer_db_path)
+        logger.info("Using SqliteSaver checkpointer: %s", settings.checkpointer_db_path)
+        return _ctx.__enter__()
+    else:
+        logger.info("Using MemorySaver checkpointer (in-memory)")
+        return MemorySaver()
+
+_checkpointer = _build_checkpointer()
+
+compiled_workflow = workflow.compile(checkpointer=_checkpointer)
 logger.info("Workflow compiled: PlanExecutor cycle topology with %d nodes", len(workflow.nodes))

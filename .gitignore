@@ -1,6 +1,9 @@
 # Vector store data
 chroma_data/
 
+# LangGraph checkpointer SQLite database
+checkpoints.db
+
 # OpenSpec workflow docs (local only)
 openspec/
 

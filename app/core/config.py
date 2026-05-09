@@ -149,6 +149,12 @@ class Settings(BaseSettings):
     enable_sql_result_chart: bool = True # 是否自动生成图表推荐
     enrich_sql_result_timeout: int = 30  # SQL 结果丰富超时
 
+    # Checkpointer 配置 — 被 workflows/graph.py 使用
+    # "memory": MemorySaver (默认, 进程重启丢失)
+    # "sqlite": SqliteSaver (持久化到 checkpoints.db, 跨重启保留)
+    checkpointer_type: str = "sqlite"
+    checkpointer_db_path: str = "checkpoints.db"
+
     # 子配置
     code_executor: CodeExecutorSettings = CodeExecutorSettings()
     file_storage: FileStorageSettings = FileStorageSettings()

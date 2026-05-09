@@ -44,6 +44,7 @@ import subprocess
 import tempfile
 import os
 import json
+import shutil
 import logging
 from .llm import llm_service
 from .config import settings
@@ -243,20 +244,133 @@ Python 代码:
 
 
 class DockerExecutor(CodeExecutor):
-    """Docker 容器执行器（Phase 3 扩展）"""
+    """Docker 容器执行器 — 安全隔离的 Python 代码执行
+
+    使用 docker run 在独立容器中执行代码:
+      - 内存限制: 从 settings.code_executor.limit_memory 读取（默认 512M）
+      - CPU 限制: 单核 (--cpus=1)
+      - 网络隔离: 禁用网络 (--network none)
+      - 只读根文件系统: --read-only，仅 temp 目录可写
+      - 超时控制: 从 settings.code_executor.code_timeout 读取（默认 60s）
+      - 非 root 用户: --user 1000:1000
+      - 禁止特权模式: --security-opt=no-new-privileges
+
+    Docker 镜像: python:3.11-slim（不含 pandas/matplotlib）
+    如需数据分析包，在 data/requirements.txt 中列出，
+    或使用 continuumio/anaconda3:latest
+    """
+
+    DOCKER_IMAGE = "python:3.11-slim"
+
+    def __init__(self, timeout: int = 60, memory: str = "512M"):
+        self.timeout = timeout
+        self.memory = memory
 
     async def execute(self, code: str, data: Any = None) -> ExecutionResult:
-        """
-        在 Docker 容器中执行代码
+        logger.info("[DockerExecutor] Executing Python code in Docker container")
 
-        TODO: Phase 3 扩展实现
-        """
-        logger.warning("[DockerExecutor] Not implemented yet")
-        return ExecutionResult(
-            success=False,
-            output="",
-            error="Docker 执行器尚未实现"
-        )
+        # 检查 Docker 是否可用
+        if not shutil.which("docker"):
+            return ExecutionResult(
+                success=False,
+                output="",
+                error="Docker 未安装或不在 PATH 中，无法使用 Docker 执行器",
+            )
+
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                code_file = os.path.join(tmpdir, "script.py")
+                data_file = os.path.join(tmpdir, "data.json")
+
+                # 写入数据文件
+                if data:
+                    with open(data_file, "w", encoding="utf-8") as f:
+                        json.dump(data, f, ensure_ascii=False)
+
+                    code = f"""
+import json
+with open('/tmp/data.json', 'r', encoding='utf-8') as f:
+    sql_result = json.load(f)
+
+{code}
+"""
+
+                # 写入代码文件
+                with open(code_file, "w", encoding="utf-8") as f:
+                    f.write(code)
+
+                # 构建 docker run 命令
+                cmd = [
+                    "docker", "run",
+                    "--rm",                          # 执行完自动删除容器
+                    "--cpus=1",                      # 限制 CPU 单核
+                    f"--memory={self.memory}",        # 内存限制
+                    "--network", "none",             # 禁用网络
+                    "--read-only",                   # 只读根文件系统
+                    "--tmpfs", "/tmp:exec",           # /tmp 可读写执行
+                    "--security-opt=no-new-privileges",  # 禁止提权
+                    "--user", "1000:1000",            # 非 root
+                    "-v", f"{tmpdir}:/tmp:ro",       # 只读挂载代码目录
+                    self.DOCKER_IMAGE,
+                    "python", "/tmp/script.py",
+                ]
+
+                logger.debug("[DockerExecutor] Running: %s", " ".join(cmd))
+
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout,
+                )
+
+                # 收集图表（Docker 无法直接输出文件到宿主机，改为检查 stdout）
+                charts = []
+                stderr = result.stderr or ""
+
+                if result.returncode == 0:
+                    logger.info("[DockerExecutor] Execution successful")
+                    return ExecutionResult(
+                        success=True,
+                        output=result.stdout,
+                        error=stderr if stderr else None,
+                        charts=charts,
+                    )
+                else:
+                    # Docker 退出码 137 = SIGKILL (OOM)，124 = timeout
+                    if result.returncode == 137:
+                        err = f"容器内存超限 (OOM)，限制: {self.memory}"
+                    elif result.returncode == 124:
+                        err = f"执行超时 ({self.timeout}s)"
+                    else:
+                        err = stderr or result.stdout or f"Exit code: {result.returncode}"
+                    logger.error(f"[DockerExecutor] Execution failed (exit={result.returncode}): {err[:200]}")
+                    return ExecutionResult(
+                        success=False,
+                        output=result.stdout,
+                        error=err,
+                    )
+
+        except subprocess.TimeoutExpired:
+            logger.error(f"[DockerExecutor] Timeout after {self.timeout}s")
+            return ExecutionResult(
+                success=False,
+                output="",
+                error=f"Docker 执行超时（{self.timeout}秒）",
+            )
+        except FileNotFoundError:
+            return ExecutionResult(
+                success=False,
+                output="",
+                error="Docker 命令不可用，请确认 Docker 已安装并在 PATH 中",
+            )
+        except Exception as e:
+            logger.exception("[DockerExecutor] Unexpected error")
+            return ExecutionResult(
+                success=False,
+                output="",
+                error=f"Docker 执行器错误: {str(e)}",
+            )
 
 
 # 执行器工厂
@@ -275,9 +389,12 @@ class ExecutorFactory:
             执行器实例
         """
         if executor_type == "local":
-            return LocalExecutor()
+            return LocalExecutor(timeout=settings.code_executor.code_timeout)
         elif executor_type == "docker":
-            return DockerExecutor()
+            return DockerExecutor(
+                timeout=settings.code_executor.code_timeout,
+                memory=settings.code_executor.limit_memory,
+            )
         elif executor_type == "ai-sim":
             return AISimExecutor()
         else:
