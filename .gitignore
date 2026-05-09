@@ -1,6 +1,9 @@
 # Vector store data
 chroma_data/
 
+# OpenSpec workflow docs (local only)
+openspec/
+
 # Python
 __pycache__/
 *.py[cod]
