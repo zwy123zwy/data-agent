@@ -54,7 +54,7 @@ class VectorStore:
 
     def __init__(self):
         """初始化 Chroma 客户端 + Embedding 客户端 (Ollama/OpenAI 兼容)"""
-        self.client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
+        self.client = chromadb.PersistentClient(path="./chroma_data")
 
         self.openai_client = AsyncOpenAI(
             api_key=settings.embedding_api_key,

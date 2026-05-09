@@ -32,6 +32,7 @@ from ..services.agent_service import AgentService
 from ..services.agent_datasource_service import AgentDatasourceService
 from ..services.semantic_model_service import SemanticModelService
 from ..services.node_metrics import NodeMetricsTracker
+from ..services.metrics_aggregation_service import MetricsAggregationService
 import asyncio
 import json
 import logging
@@ -164,6 +165,10 @@ async def stream_workflow_execution(
             yield _format_sse_event("error", _build_graph_response(
                 agent_id, thread_id, "", "Agent 不存在", TEXT_TYPE_TEXT, error=True
             ))
+            await MetricsAggregationService.record_execution(
+                db, thread_id=thread_id, agent_id=agent_id, status="error",
+                total_duration_ms=0, total_nodes=0, succeeded_nodes=0, failed_nodes=1,
+            )
             return
 
         # 检查数据源 — 获取激活的数据源及其 select_tables
@@ -173,6 +178,10 @@ async def stream_workflow_execution(
             yield _format_sse_event("error", _build_graph_response(
                 agent_id, thread_id, "", "没有激活的数据源", TEXT_TYPE_TEXT, error=True
             ))
+            await MetricsAggregationService.record_execution(
+                db, thread_id=thread_id, agent_id=agent_id, status="error",
+                total_duration_ms=0, total_nodes=0, succeeded_nodes=0, failed_nodes=1,
+            )
             return
         datasource_id = active_agent_ds.datasource_id
         select_tables = active_agent_ds.select_tables
@@ -238,6 +247,63 @@ async def stream_workflow_execution(
         # ===== 节点指标追踪 — 对齐 Java NodeMetrics =====
         tracker = NodeMetricsTracker(thread_id, agent_id)
 
+        # ===== Phase 7 核心指标收集 =====
+        metrics_state: dict[str, bool | int | str | None] = {
+            "intent_classification": None,
+            "sql_generated": False,
+            "sql_executed": False,
+            "sql_success": False,
+            "sql_semantic_pass": False,
+            "python_executed": False,
+            "python_success": False,
+            "plan_first_pass": False,
+            "plan_repair_count": 0,
+            "report_generated": False,
+            "hf_enabled": human_feedback,
+            "hf_rejected": rejected_plan,
+            "hf_reject_count": 0,
+            "hf_final_status": None,
+            "schema_tables_expected": len(select_tables) if select_tables else None,
+        }
+
+        async def _record_metrics(status: str = "success") -> None:
+            """记录本次执行指标到数据库 (非致命)"""
+            try:
+                summary = tracker.summary()
+                node_durations = {
+                    m.node_name: m.duration_ms
+                    for m in tracker.node_executions
+                    if m.duration_ms > 0
+                }
+                await MetricsAggregationService.record_execution(
+                    db,
+                    thread_id=thread_id,
+                    agent_id=agent_id,
+                    status=status,
+                    total_duration_ms=summary.get("totalDurationMs", 0),
+                    total_nodes=summary.get("totalNodes", 0),
+                    succeeded_nodes=summary.get("succeeded", 0),
+                    failed_nodes=summary.get("failed", 0),
+                    intent_classification=metrics_state.get("intent_classification"),
+                    sql_generated=bool(metrics_state.get("sql_generated")),
+                    sql_executed=bool(metrics_state.get("sql_executed")),
+                    sql_success=bool(metrics_state.get("sql_success")),
+                    sql_semantic_pass=bool(metrics_state.get("sql_semantic_pass")),
+                    python_executed=bool(metrics_state.get("python_executed")),
+                    python_success=bool(metrics_state.get("python_success")),
+                    plan_first_pass=bool(metrics_state.get("plan_first_pass")),
+                    plan_repair_count=int(metrics_state.get("plan_repair_count", 0)),
+                    report_generated=bool(metrics_state.get("report_generated")),
+                    hf_enabled=bool(metrics_state.get("hf_enabled")),
+                    hf_rejected=bool(metrics_state.get("hf_rejected")),
+                    hf_reject_count=int(metrics_state.get("hf_reject_count", 0)),
+                    hf_final_status=metrics_state.get("hf_final_status"),
+                    node_durations=node_durations,
+                    schema_tables_expected=metrics_state.get("schema_tables_expected"),
+                )
+            except Exception:
+                logger.exception("[Metrics] Non-fatal error recording execution metrics")
+
         async for event in compiled_workflow.astream(graph_input, config, stream_mode="updates"):
             # ★ Handle LangGraph interrupt (HumanFeedback pause)
             # When human_feedback_node calls interrupt(), LangGraph yields
@@ -268,6 +334,7 @@ async def stream_workflow_execution(
                     agent_id, thread_id, NODE_NAME_MAP.get("human_feedback", ""), "", TEXT_TYPE_TEXT
                 ))
                 tracker.log_summary()
+                await _record_metrics("paused")
                 return
 
             for node_name, node_output in event.items():
@@ -288,6 +355,7 @@ async def stream_workflow_execution(
                 if node_name == "intent_recognition":
                     intent = node_output.get("intent", "")
                     classification = node_output.get("classification", "")
+                    metrics_state["intent_classification"] = intent  # Phase 7: 记录意图分类
                     # 对齐 Java: "正在进行意图识别..." + JSON + "\n意图识别完成！"
                     json_part = json.dumps({"classification": classification}, ensure_ascii=False)
                     if intent == "data_analysis":
@@ -304,6 +372,7 @@ async def stream_workflow_execution(
                             agent_id, thread_id, "", "", TEXT_TYPE_TEXT, complete=True
                         ))
                         tracker.log_summary()
+                        await _record_metrics("success")
                         return
 
                 # ===== 知识召回 =====
@@ -378,6 +447,9 @@ async def stream_workflow_execution(
                         steps = plan.get("execution_plan", []) if isinstance(plan, dict) else []
                         step_count = len(steps)
                         text = f"正在制定执行计划...共 {step_count} 个步骤"
+                        # Phase 7: Plan首次校验通过 (Planner成功产出合法Plan)
+                        if steps:
+                            metrics_state["plan_first_pass"] = True
                     except (json.JSONDecodeError, TypeError):
                         text = "正在制定执行计划..."
                     yield _format_sse_data(_build_graph_response(
@@ -390,6 +462,10 @@ async def stream_workflow_execution(
                 elif node_name == "plan_executor":
                     next_node = node_output.get("plan_next_node", "")
                     current_step = node_output.get("plan_current_step", 1)
+                    repair_count = node_output.get("plan_repair_count", 0)
+                    metrics_state["plan_repair_count"] = max(
+                        int(metrics_state.get("plan_repair_count", 0)), int(repair_count)
+                    )  # Phase 7
                     if next_node:
                         text = f"正在执行步骤 {current_step}..."
                     else:
@@ -404,6 +480,7 @@ async def stream_workflow_execution(
                 elif node_name == "sql_generate":
                     sql = node_output.get("generated_sql", "")
                     if sql:
+                        metrics_state["sql_generated"] = True  # Phase 7
                         yield _format_sse_data(_build_graph_response(
                             agent_id, thread_id, java_name, sql, TEXT_TYPE_SQL
                         ))
@@ -415,6 +492,8 @@ async def stream_workflow_execution(
                     error = node_output.get("sql_error")
                     result = node_output.get("sql_result")
                     sql_status = "error" if error else "success"
+                    metrics_state["sql_executed"] = True  # Phase 7
+                    metrics_state["sql_success"] = not error  # Phase 7
                     if error:
                         yield _format_sse_data(_build_graph_response(
                             agent_id, thread_id, java_name, f"SQL 执行错误: {error}", TEXT_TYPE_TEXT
@@ -433,6 +512,8 @@ async def stream_workflow_execution(
                 elif node_name == "semantic_consistency":
                     passed = node_output.get("semantic_consistency_result", False)
                     score = node_output.get("semantic_consistency_score", 0)
+                    if passed:
+                        metrics_state["sql_semantic_pass"] = True  # Phase 7
                     text = f"正在校验 SQL 语义...{'✓ 通过' if passed else '⚠ 未通过'}"
                     yield _format_sse_data(_build_graph_response(
                         agent_id, thread_id, java_name, text, TEXT_TYPE_TEXT
@@ -454,6 +535,8 @@ async def stream_workflow_execution(
                 elif node_name == "python_execute":
                     is_success = node_output.get("python_is_success", False)
                     error = node_output.get("python_error", "")
+                    metrics_state["python_executed"] = True  # Phase 7
+                    metrics_state["python_success"] = is_success  # Phase 7
                     if is_success:
                         yield _format_sse_data(_build_graph_response(
                             agent_id, thread_id, java_name, "Python 代码执行成功", TEXT_TYPE_TEXT
@@ -479,6 +562,8 @@ async def stream_workflow_execution(
                     html_report = node_output.get("html_report", "")
                     report = node_output.get("report", "")
                     markdown_report = node_output.get("markdown_report", "")
+                    if html_report or markdown_report or report:
+                        metrics_state["report_generated"] = True  # Phase 7
 
                     if html_report:
                         yield _format_sse_data(_build_graph_response(
@@ -498,6 +583,14 @@ async def stream_workflow_execution(
                 # ===== Human Feedback (interrupt 会在此暂停) =====
                 elif node_name == "human_feedback":
                     if isinstance(node_output, dict) and node_output.get("type") == "human_feedback":
+                        # Phase 7: 记录 HumanFeedback 状态
+                        hf_action = node_output.get("action", "")
+                        hf_reject_count_val = node_output.get("reject_count", 0)
+                        metrics_state["hf_reject_count"] = int(hf_reject_count_val)
+                        if hf_action == "reject":
+                            metrics_state["hf_rejected"] = True
+                        elif hf_action == "approve":
+                            metrics_state["hf_final_status"] = "approved"
                         text = json.dumps(node_output, ensure_ascii=False)
                         yield _format_sse_data(_build_graph_response(
                             agent_id, thread_id, java_name, text, TEXT_TYPE_JSON
@@ -510,12 +603,14 @@ async def stream_workflow_execution(
                         m.finish("paused")
                         m.log()
                         tracker.log_summary()
+                        await _record_metrics("paused")
                         # LangGraph interrupt 在此触发，流自然暂停
                         return
 
         # 发送完成事件 — 对齐 Java handleStreamComplete
         logger.info(f"[Stream] Complete, threadId={thread_id}")
         tracker.log_summary()
+        await _record_metrics("success")
         yield _format_sse_event("complete", _build_graph_response(
             agent_id, thread_id, "", "", TEXT_TYPE_TEXT, complete=True
         ))
@@ -523,6 +618,7 @@ async def stream_workflow_execution(
     except asyncio.CancelledError:
         logger.info(f"[Stream] Client disconnected, threadId={thread_id}, releasing resources")
         tracker.log_summary()
+        await _record_metrics("cancelled")
         # 前端关闭 EventSource → 正常释放，不发送额外 SSE
         return
     except Exception as e:
@@ -530,6 +626,7 @@ async def stream_workflow_execution(
         tb.print_exc()
         logger.error(f"[Stream] Error for threadId={thread_id}: {e}\n{tb.format_exc()}")
         tracker.log_summary()
+        await _record_metrics("error")
         yield _format_sse_event("error", _build_graph_response(
             agent_id, thread_id, "", str(e), TEXT_TYPE_TEXT, error=True
         ))

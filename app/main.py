@@ -61,6 +61,7 @@ from .api import (
     business_knowledge_controller,       # 业务知识
     upload_controller,                   # 文件上传/下载
     echo_controller,                     # 心跳检测
+    metrics_controller,                  # 核心指标查询
 )
 
 
@@ -136,6 +137,7 @@ app.include_router(prompt_config_controller.router)
 app.include_router(business_knowledge_controller.router)
 app.include_router(upload_controller.router)
 app.include_router(echo_controller.router)
+app.include_router(metrics_controller.router)
 
 
 @app.get("/", tags=["健康检查"])

@@ -20,6 +20,7 @@ from . import (
     business_knowledge_controller,
     upload_controller,
     echo_controller,
+    metrics_controller,
 )
 
 __all__ = [
@@ -40,4 +41,5 @@ __all__ = [
     "business_knowledge_controller",
     "upload_controller",
     "echo_controller",
+    "metrics_controller",
 ]
