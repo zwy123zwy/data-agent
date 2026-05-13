@@ -57,10 +57,10 @@ START → IntentRecognition
         ├→ REPORT_GENERATOR → END
         └→ HUMAN_FEEDBACK → (approve) PlanExecutor / (reject) Planner
 """
+import asyncio
 from typing import Literal
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.checkpoint.sqlite import SqliteSaver
 from .state import WorkflowState
 from .nodes.intent_recognition import intent_recognition_node
 from .nodes.knowledge_recall import knowledge_recall_node
@@ -289,20 +289,34 @@ workflow.add_conditional_edges("human_feedback", route_after_human_feedback, {
 # ★ checkpointer 为 HumanFeedback interrupt/resume 提供状态持久化
 # 通过 settings.checkpointer_type 切换:
 #   "memory" → MemorySaver (进程重启丢失)
-#   "sqlite" → SqliteSaver (持久化到文件, 跨重启恢复)
+#   "sqlite" → AsyncSqliteSaver (持久化到文件, 跨重启恢复)
 
-def _build_checkpointer():
-    """根据配置创建 checkpointer 实例"""
+async def _build_checkpointer():
+    """根据配置创建 checkpointer 实例（异步）"""
     if settings.checkpointer_type == "sqlite":
-        # from_conn_string 返回 context manager，手动进入后保持连接
-        _ctx = SqliteSaver.from_conn_string(settings.checkpointer_db_path)
-        logger.info("Using SqliteSaver checkpointer: %s", settings.checkpointer_db_path)
-        return _ctx.__enter__()
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+        _ctx = AsyncSqliteSaver.from_conn_string(settings.checkpointer_db_path)
+        checkpointer = await _ctx.__aenter__()
+        logger.info("Using AsyncSqliteSaver checkpointer: %s", settings.checkpointer_db_path)
+        return checkpointer
     else:
         logger.info("Using MemorySaver checkpointer (in-memory)")
         return MemorySaver()
 
-_checkpointer = _build_checkpointer()
+_compiled_workflow = None
+_lock = asyncio.Lock()
 
-compiled_workflow = workflow.compile(checkpointer=_checkpointer)
-logger.info("Workflow compiled: PlanExecutor cycle topology with %d nodes", len(workflow.nodes))
+async def get_compiled_workflow():
+    """延迟初始化 compiled_workflow（异步 checkpointer 需要）"""
+    global _compiled_workflow
+    if _compiled_workflow is not None:
+        return _compiled_workflow
+
+    async with _lock:
+        if _compiled_workflow is not None:
+            return _compiled_workflow
+
+        checkpointer = await _build_checkpointer()
+        _compiled_workflow = workflow.compile(checkpointer=checkpointer)
+        logger.info("Workflow compiled: PlanExecutor cycle topology with %d nodes", len(workflow.nodes))
+        return _compiled_workflow

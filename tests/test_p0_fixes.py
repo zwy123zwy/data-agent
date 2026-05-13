@@ -326,7 +326,8 @@ class TestCheckpointerConfig:
     @pytest.mark.asyncio
     async def test_compiled_workflow_exists(self):
         """验证 compiled_workflow 已编译并可用"""
-        from app.workflows.graph import compiled_workflow
+        from app.workflows.graph import get_compiled_workflow
+        compiled_workflow = await get_compiled_workflow()
         assert compiled_workflow is not None
 
     def test_memory_saver_import(self):
@@ -335,12 +336,13 @@ class TestCheckpointerConfig:
         saver = MemorySaver()
         assert saver is not None
 
-    def test_sqlite_saver_import(self):
-        """SqliteSaver 可用"""
-        from langgraph.checkpoint.sqlite import SqliteSaver
+    @pytest.mark.asyncio
+    async def test_async_sqlite_saver_import(self):
+        """AsyncSqliteSaver 可用"""
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
         # 使用 :memory: 不创建文件
-        saver = SqliteSaver.from_conn_string(":memory:")
-        assert saver is not None
+        async with AsyncSqliteSaver.from_conn_string(":memory:") as saver:
+            assert saver is not None
 
 
 # =========================================================================

@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from langgraph.types import Command
 from ..core.database import get_db
 from ..schemas.query import QueryRequest
-from ..workflows.graph import compiled_workflow
+from ..workflows.graph import get_compiled_workflow
 from ..workflows.state import WorkflowState
 from ..services.agent_service import AgentService
 from ..services.agent_datasource_service import AgentDatasourceService
@@ -304,6 +304,7 @@ async def stream_workflow_execution(
             except Exception:
                 logger.exception("[Metrics] Non-fatal error recording execution metrics")
 
+        compiled_workflow = await get_compiled_workflow()
         async for event in compiled_workflow.astream(graph_input, config, stream_mode="updates"):
             # ★ Handle LangGraph interrupt (HumanFeedback pause)
             # When human_feedback_node calls interrupt(), LangGraph yields

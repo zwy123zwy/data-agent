@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from langgraph.types import Command
 from ..core.database import get_db
 from ..schemas.query import QueryRequest, QueryResponse
-from ..workflows.graph import compiled_workflow
+from ..workflows.graph import get_compiled_workflow
 from ..workflows.state import WorkflowState
 import json
 import logging
@@ -110,6 +110,7 @@ async def execute_query(
             if query_request.workflow_id
             else None
         )
+        compiled_workflow = await get_compiled_workflow()
         final_state = await compiled_workflow.ainvoke(graph_input, config)
 
         intent = final_state.get("intent", "chitchat")

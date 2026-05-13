@@ -97,7 +97,7 @@ class McpServerService:
             )
 
         try:
-            from ..workflows.graph import compiled_workflow
+            from ..workflows.graph import get_compiled_workflow
 
             initial_state = {
                 "agent_id": agent_id,
@@ -108,6 +108,7 @@ class McpServerService:
                 "plan_current_step": 1,
             }
 
+            compiled_workflow = await get_compiled_workflow()
             result = await compiled_workflow.ainvoke(initial_state)
 
             sql = result.get("generated_sql", "")
