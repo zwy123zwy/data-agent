@@ -1,7 +1,7 @@
 """ChatMessage 消息模型 - 对齐 Java ChatMessage"""
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Integer, Text, DateTime, ForeignKey, JSON
+from sqlalchemy import String, Integer, Text, DateTime, ForeignKey, JSON, Index
 from sqlalchemy.orm import Mapped, mapped_column
 from ..core.database import Base
 
@@ -18,7 +18,15 @@ class ChatMessage(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False, comment="消息内容")
     message_type: Mapped[str] = mapped_column(
         String(50), default="text",
-        comment="消息类型: text/sql/result/error/html/result-set/html-report/markdown-report/json/python"
+        comment="消息类型: text/sql/result/error/html/markdown/python"
     )
     metadata_: Mapped[Optional[dict]] = mapped_column("metadata", JSON, comment="元数据（JSON格式）")
     create_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, comment="创建时间")
+
+    # 索引 — 对齐 Java
+    __table_args__ = (
+        Index("idx_session_id", "session_id"),
+        Index("idx_role", "role"),
+        Index("idx_message_type", "message_type"),
+        Index("idx_create_time", "create_time"),
+    )

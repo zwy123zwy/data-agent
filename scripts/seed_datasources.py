@@ -25,17 +25,17 @@ async def seed_datasources():
                 type="mysql",
                 host="localhost",
                 port=3306,
-                database="dataagent",
+                database_name="dataagent",
                 username="root",
                 password="123456",
-                test_status="untested"
+                test_status="unknown"
             ),
             Datasource(
                 name="测试SQLite数据库",
                 type="sqlite",
-                database="test.db",
+                database_name="test.db",
                 connection_url="sqlite:///./test.db",
-                test_status="untested"
+                test_status="unknown"
             ),
         ]
 

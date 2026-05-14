@@ -70,7 +70,7 @@ class SchemaService:
         try:
             async with engine.connect() as conn:
                 # 获取所有表
-                all_tables = await handler.get_tables(conn, datasource.database)
+                all_tables = await handler.get_tables(conn, datasource.database_name)
 
                 # 如果指定了表名，则过滤
                 if table_names:
@@ -82,10 +82,10 @@ class SchemaService:
                     table_name = table["name"]
 
                     # 获取字段信息
-                    columns = await handler.get_columns(conn, datasource.database, table_name)
+                    columns = await handler.get_columns(conn, datasource.database_name, table_name)
 
                     # 获取外键信息（如果支持）
-                    foreign_keys = await handler.get_foreign_keys(conn, datasource.database, table_name)
+                    foreign_keys = await handler.get_foreign_keys(conn, datasource.database_name, table_name)
 
                     tables_with_details.append({
                         "name": table_name,
@@ -95,7 +95,7 @@ class SchemaService:
                     })
 
                 return {
-                    "database": datasource.database,
+                    "database": datasource.database_name,
                     "type": datasource.type,
                     "tables": tables_with_details
                 }

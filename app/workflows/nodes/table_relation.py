@@ -155,7 +155,7 @@ async def table_relation_node(state: WorkflowState) -> Dict[str, Any]:
                 "tables": enhanced_tables,
                 "relations": all_relations,
                 "dialect": dialect,
-                "database": datasource.database,
+                "database": datasource.database_name,
             }
 
             return {

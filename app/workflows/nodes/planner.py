@@ -40,6 +40,8 @@ from typing import Dict, Any
 from ..state import WorkflowState, get_canonical_query
 from ...core.llm import llm_service
 from ...core.text_utils import clean_code_block
+from ...core.database import get_db
+from ...services.prompt_config_service import PromptConfigService
 import logging
 import json
 
@@ -127,6 +129,22 @@ def _build_user_prompt(canonical_query: str, validation_error: str | None,
     )
 
 
+async def _load_planner_prompt(agent_id: int) -> str:
+    """加载 Planner 自定义 Prompt — 对齐 Java PlannerNode 使用 UserPromptConfig"""
+    try:
+        async for db in get_db():
+            configs = await PromptConfigService.get_active_all_by_type(
+                db, "planner", agent_id=agent_id
+            )
+            if configs:
+                optimizations = "\n\n".join(c.system_prompt for c in configs if c.system_prompt)
+                if optimizations:
+                    return PLANNER_SYSTEM_PROMPT + "\n\n## 自定义优化规则\n" + optimizations
+    except Exception:
+        pass
+    return PLANNER_SYSTEM_PROMPT
+
+
 async def planner_node(state: WorkflowState) -> Dict[str, Any]:
     """计划生成节点 — 对齐 Java PlannerNode.apply()
 
@@ -139,6 +157,7 @@ async def planner_node(state: WorkflowState) -> Dict[str, Any]:
         return {"query_plan": json.dumps(NL2SQL_PLAN, ensure_ascii=False)}
 
     canonical_query = get_canonical_query(state)
+    agent_id = state.get("agent_id", 0)
     logger.info(f"[Planner] Using processed query for planning: {canonical_query}")
 
     # 检查是否为修复模式
@@ -153,7 +172,8 @@ async def planner_node(state: WorkflowState) -> Dict[str, Any]:
     user_prompt = _build_user_prompt(canonical_query, validation_error, state)
 
     try:
-        system_prompt = PLANNER_SYSTEM_PROMPT
+        # 对齐 Java: 从 DB 加载自定义 Planner Prompt
+        system_prompt = await _load_planner_prompt(agent_id)
         if validation_error:
             system_prompt += (
                 f"\n\n**USER FEEDBACK (CRITICAL)**: {validation_error}\n"

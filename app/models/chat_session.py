@@ -1,7 +1,7 @@
 """ChatSession 会话模型 - 对齐 Java ChatSession"""
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Integer, DateTime, ForeignKey
+from sqlalchemy import String, Integer, DateTime, ForeignKey, Index
 from sqlalchemy.orm import Mapped, mapped_column
 from ..core.database import Base
 
@@ -14,7 +14,7 @@ class ChatSession(Base):
         Integer, ForeignKey("agent.id", ondelete="CASCADE"),
         nullable=False, comment="智能体ID"
     )
-    title: Mapped[str] = mapped_column(String(255), default="新对话", comment="会话标题")
+    title: Mapped[str] = mapped_column(String(255), default="new conversation", comment="会话标题")
     status: Mapped[str] = mapped_column(
         String(50), default="active",
         comment="状态: active/archived/deleted"
@@ -24,4 +24,13 @@ class ChatSession(Base):
     create_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, comment="创建时间")
     update_time: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间"
+    )
+
+    # 索引 — 对齐 Java
+    __table_args__ = (
+        Index("idx_agent_id", "agent_id"),
+        Index("idx_user_id", "user_id"),
+        Index("idx_status", "status"),
+        Index("idx_is_pinned", "is_pinned"),
+        Index("idx_create_time", "create_time"),
     )

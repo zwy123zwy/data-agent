@@ -71,7 +71,7 @@ async def schema_recall_node(state: WorkflowState) -> WorkflowState:
             state["schema"] = schema_ddl  # LLM 使用的文本格式
             state["schema_info"] = schema_dict  # 结构化数据
 
-            logger.info(f"Schema 召回完成: {datasource.database}, {len(schema_dict['tables'])} 张表")
+            logger.info(f"Schema 召回完成: {datasource.database_name}, {len(schema_dict['tables'])} 张表")
 
     except Exception as e:
         state["error"] = f"Schema recall failed: {str(e)}"

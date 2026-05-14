@@ -292,23 +292,31 @@ workflow.add_conditional_edges("human_feedback", route_after_human_feedback, {
 #   "sqlite" → AsyncSqliteSaver (持久化到文件, 跨重启恢复)
 
 async def _build_checkpointer():
-    """根据配置创建 checkpointer 实例（异步）"""
+    """根据配置创建 checkpointer 实例（异步）
+
+    返回 (context_manager, checkpointer) 元组。
+    context_manager 必须保持存活，否则 aiosqlite 的异步生成器被 GC
+    时会关闭底层 SQLite 连接，导致 "threads can only be started once" 错误。
+    """
     if settings.checkpointer_type == "sqlite":
         from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-        _ctx = AsyncSqliteSaver.from_conn_string(settings.checkpointer_db_path)
-        checkpointer = await _ctx.__aenter__()
+        # ★ from_conn_string 是 @asynccontextmanager，必须保持其存活
+        #    否则 yield 后的清理代码会关闭 aiosqlite 连接
+        ctx = AsyncSqliteSaver.from_conn_string(settings.checkpointer_db_path)
+        checkpointer = await ctx.__aenter__()
         logger.info("Using AsyncSqliteSaver checkpointer: %s", settings.checkpointer_db_path)
-        return checkpointer
+        return ctx, checkpointer
     else:
         logger.info("Using MemorySaver checkpointer (in-memory)")
-        return MemorySaver()
+        return None, MemorySaver()
 
 _compiled_workflow = None
+_checkpointer_ctx = None  # ★ 保持 context manager 存活，防止 aiosqlite 连接被 GC 关闭
 _lock = asyncio.Lock()
 
 async def get_compiled_workflow():
     """延迟初始化 compiled_workflow（异步 checkpointer 需要）"""
-    global _compiled_workflow
+    global _compiled_workflow, _checkpointer_ctx
     if _compiled_workflow is not None:
         return _compiled_workflow
 
@@ -316,7 +324,7 @@ async def get_compiled_workflow():
         if _compiled_workflow is not None:
             return _compiled_workflow
 
-        checkpointer = await _build_checkpointer()
+        _checkpointer_ctx, checkpointer = await _build_checkpointer()
         _compiled_workflow = workflow.compile(checkpointer=checkpointer)
         logger.info("Workflow compiled: PlanExecutor cycle topology with %d nodes", len(workflow.nodes))
         return _compiled_workflow

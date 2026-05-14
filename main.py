@@ -11,9 +11,9 @@ if __name__ == "__main__":
     import argparse
     import uvicorn
 
-    parser = argparse.ArgumentParser(description="python-agent-v2 server")
+    parser = argparse.ArgumentParser(description="data-agent-server")
     parser.add_argument("--host", default="0.0.0.0", help="监听地址")
-    parser.add_argument("--port", type=int, default=8100, help="监听端口")
+    parser.add_argument("--port", type=int, default=8200, help="监听端口")
     parser.add_argument("--reload", action="store_true", help="启用热重载 (开发模式)")
     args = parser.parse_args()
 

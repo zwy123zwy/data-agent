@@ -163,6 +163,14 @@ async def plan_executor_node(state: WorkflowState) -> Dict[str, Any]:
 
     # 3. 检查是否所有步骤完成
     if current_step > total_steps:
+        # 对齐 Java: isOnlyNl2Sql 时直接 END，不生成报告
+        if is_nl2sql:
+            logger.info(f"[PlanExecutor] All {total_steps} steps completed (NL2SQL only, ending)")
+            return {
+                "plan_current_step": 1,
+                "plan_next_node": "END",
+                "plan_validation_status": True,
+            }
         logger.info(f"[PlanExecutor] All {total_steps} steps completed, routing to report generator")
         return {
             "plan_current_step": 1,  # reset
@@ -217,6 +225,10 @@ def route_after_plan_executor(state: WorkflowState) -> Literal[
         return "planner"
 
     next_node = state.get("plan_next_node", "")
+
+    # 对齐 Java: isOnlyNl2Sql 模式完成时直接 END
+    if next_node == "END":
+        return "end"
 
     node_map = {
         SQL_GENERATE_NODE: "sql_generate",

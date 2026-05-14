@@ -5,9 +5,9 @@ from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 class DatasourceBase(BaseModel):
     """Datasource 基础模型 — camelCase 对齐前端/Java"""
-    name: str = Field(..., max_length=100, description="数据源名称")
+    name: str = Field(..., max_length=255, description="数据源名称")
     type: str = Field(..., pattern="^(mysql|postgresql|sqlite)$", description="数据库类型")
-    database: str = Field(..., max_length=100, alias="databaseName", description="数据库名")
+    database_name: str = Field(..., max_length=255, alias="databaseName", description="数据库名")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -16,9 +16,9 @@ class DatasourceCreate(DatasourceBase):
     """创建 Datasource 请求 — 前端字段名对齐"""
     host: Optional[str] = Field(None, max_length=255, description="主机地址")
     port: Optional[int] = Field(None, ge=1, le=65535, description="端口号")
-    username: Optional[str] = Field(None, max_length=100, description="用户名")
+    username: Optional[str] = Field(None, max_length=255, description="用户名")
     password: Optional[str] = Field(None, max_length=255, description="密码")
-    connection_url: Optional[str] = Field(None, max_length=500, alias="connectionUrl", description="连接字符串（SQLite）")
+    connection_url: Optional[str] = Field(None, max_length=1000, alias="connectionUrl", description="连接字符串（SQLite）")
     description: Optional[str] = Field(None, description="数据源描述")
 
     model_config = ConfigDict(populate_by_name=True)
@@ -35,13 +35,13 @@ class DatasourceCreate(DatasourceBase):
 
 class DatasourceUpdate(BaseModel):
     """更新 Datasource 请求 — 前端字段名对齐"""
-    name: Optional[str] = Field(None, max_length=100, description="数据源名称")
+    name: Optional[str] = Field(None, max_length=255, description="数据源名称")
     host: Optional[str] = Field(None, max_length=255, description="主机地址")
     port: Optional[int] = Field(None, ge=1, le=65535, description="端口号")
-    username: Optional[str] = Field(None, max_length=100, description="用户名")
+    username: Optional[str] = Field(None, max_length=255, description="用户名")
     password: Optional[str] = Field(None, max_length=255, description="密码")
-    connection_url: Optional[str] = Field(None, max_length=500, alias="connectionUrl", description="连接字符串")
-    database: Optional[str] = Field(None, max_length=100, alias="databaseName", description="数据库名")
+    connection_url: Optional[str] = Field(None, max_length=1000, alias="connectionUrl", description="连接字符串")
+    database_name: Optional[str] = Field(None, max_length=255, alias="databaseName", description="数据库名")
     description: Optional[str] = Field(None, description="数据源描述")
     status: Optional[str] = Field(None, pattern="^(active|inactive|deleted)$", description="通用状态")
 
@@ -55,10 +55,10 @@ class DatasourceResponse(BaseModel):
     type: Optional[str] = None
     host: Optional[str] = None
     port: Optional[int] = None
-    database: Optional[str] = Field(None, alias="databaseName")
+    database_name: Optional[str] = Field(None, alias="databaseName")
     username: Optional[str] = None
     connection_url: Optional[str] = Field(None, alias="connectionUrl")
-    status: Optional[str] = "active"
+    status: Optional[str] = "inactive"
     test_status: Optional[str] = Field(None, alias="testStatus")
     description: Optional[str] = None
     creator_id: Optional[int] = Field(None, alias="creatorId")

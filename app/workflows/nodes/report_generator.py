@@ -1,55 +1,31 @@
 """
 报告生成节点 — 对齐 Java ReportGeneratorNode
 
-【在系统中的地位】
-  这是 LangGraph 工作流的终点节点。它汇总前面所有步骤的结果
-  (SQL 查询结果 + Python 分析 + 图表)，调用 LLM 生成专业报告。
-
 【模块连接】
-  上游 (由谁路由到此):
-    - plan_executor → 所有执行步骤都完成时路由而来
+  上游: plan_executor → 所有执行步骤完成后路由而来
+  下游: state["report"], state["html_report"], state["markdown_report"], state["display_style"]
+  路由: → END
 
-  下游 (写入 state):
-    - state["report"]            → Markdown 格式报告
-    - state["html_report"]        → HTML 格式报告 (含 ECharts 图表)
-    - state["markdown_report"]    → Markdown 报告 (同 report)
-    - state["display_style"]      → ECharts 图表配置 (前端渲染用)
-
-  路由 (graph.py):
-    - report_generator → END (工作流结束)
-
-  读取 state (汇总所有前置步骤的结果):
-    - state["sql_result_list_memory"] → 所有 SQL 步骤的结果
-    - state["python_analysis"]        → Python 分析结论
-    - state["python_output"]          → Python 执行输出
-    - state["python_charts"]          → Python 生成的图表
-    - state["query_plan"]             → 执行计划 (获取 thought_process)
-
-  依赖:
-    - core/llm.py:llm_service.chat() → LLM 生成报告文本 + 图表推荐
-    - ECharts CDN (前端渲染)         → HTML 报告中的图表通过 CDN 加载
-
-  Java 对应:
-    report_generator_node ≈ ReportGeneratorNode.java
-    _recommend_chart()    ≈ data-view-analyze 模块
-
-【报告格式】
-  - Markdown: 纯文本，适合导出和二次编辑
-  - HTML: 内嵌 ECharts 图表，适合浏览器查看
-  两种格式都生成，前端根据需要选择展示
+【对齐 Java ReportGeneratorNode 的改进】
+  1. 从 DB 加载 UserPromptConfig (report-generator 类型) 自定义提示词
+  2. 结构化提示词: 用户需求 + 执行计划 + 数据结果 + Python分析 + 总结建议
+  3. 支持 per-agent 自定义报告模板
 """
 from typing import Dict, Any
 from ..state import WorkflowState, get_canonical_query
 from ...core.llm import llm_service
 from ...core.config import settings
 from ...core.text_utils import clean_code_block
+from ...core.database import get_db
+from ...services.prompt_config_service import PromptConfigService
 import logging
 import json
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-REPORT_SYSTEM_PROMPT = """你是一个数据分析报告生成专家。
+# 默认报告系统提示词 — 对齐 Java report-generator-plain.txt
+DEFAULT_REPORT_SYSTEM_PROMPT = """你是一个数据分析报告生成专家。
 根据分析过程和结果，生成专业的数据分析报告。
 
 报告要求:
@@ -76,9 +52,7 @@ CHART_RECOMMEND_SYSTEM_PROMPT = """你是一个数据可视化专家。
   "title": "图表标题",
   "x_axis_field": "X轴字段名",
   "y_axis_field": "Y轴字段名",
-  "echarts_option": {
-    // 完整的 ECharts option 配置
-  }
+  "echarts_option": { ... }
 }
 """
 
@@ -135,8 +109,6 @@ def generate_html_report(report_md: str, chart_configs: list, state: WorkflowSta
         .analysis {{ background-color: #e8f5e9; padding: 20px; border-radius: 4px; border-left: 4px solid #4CAF50; line-height: 1.8; }}
         .chart-container {{ margin: 25px 0; padding: 15px; background: #fafafa; border-radius: 8px; border: 1px solid #e0e0e0; }}
         .footer {{ margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; color: #888; font-size: 0.9em; text-align: center; }}
-        .step-result {{ margin: 15px 0; padding: 15px; background: #fafafa; border-radius: 6px; border: 1px solid #e8e8e8; }}
-        .badge {{ display: inline-block; padding: 3px 8px; border-radius: 3px; font-size: 0.8em; background: #4CAF50; color: white; }}
         pre {{ white-space: pre-wrap; word-wrap: break-word; }}
         blockquote {{ border-left: 4px solid #ddd; padding-left: 15px; color: #666; margin: 15px 0; }}
     </style>
@@ -162,28 +134,104 @@ def generate_html_report(report_md: str, chart_configs: list, state: WorkflowSta
     return html
 
 
+async def _load_report_prompt(agent_id: int) -> str:
+    """加载报告自定义 Prompt — 对齐 Java getOptimizationConfigs("report-generator", agentId)"""
+    try:
+        async for db in get_db():
+            configs = await PromptConfigService.get_active_all_by_type(
+                db, "report-generator", agent_id=agent_id
+            )
+            if configs:
+                optimizations = "\n\n".join(c.system_prompt for c in configs if c.system_prompt)
+                if optimizations:
+                    return DEFAULT_REPORT_SYSTEM_PROMPT + "\n\n## 自定义优化规则\n" + optimizations
+    except Exception:
+        pass
+    return DEFAULT_REPORT_SYSTEM_PROMPT
+
+
+def _build_user_requirements_and_plan(user_query: str, plan: dict) -> str:
+    """构建用户需求与执行计划描述 — 对齐 Java buildUserRequirementsAndPlan"""
+    parts = [
+        "## 用户原始需求",
+        user_query,
+        "",
+        "## 执行计划概述",
+        f"**思考过程**: {plan.get('thought_process', '无')}",
+        "",
+        "## 详细执行步骤",
+    ]
+    steps = plan.get("execution_plan", [])
+    for i, step in enumerate(steps):
+        parts.append(f"### 步骤 {i + 1}: 步骤编号 {step.get('step', i + 1)}")
+        parts.append(f"**工具**: {step.get('tool_to_use', 'Unknown')}")
+        tp = step.get("tool_parameters") or {}
+        if tp.get("instruction"):
+            parts.append(f"**参数描述**: {tp['instruction']}")
+        parts.append("")
+    return "\n".join(parts)
+
+
+def _build_analysis_steps_and_data(plan: dict, sql_memory: list,
+                                   python_analysis: str, python_output: str) -> str:
+    """构建分析步骤与数据结果 — 对齐 Java buildAnalysisStepsAndData"""
+    parts = ["## 数据执行结果"]
+    if not sql_memory and not python_analysis:
+        parts.append("暂无执行结果数据")
+        return "\n".join(parts)
+
+    steps = plan.get("execution_plan", [])
+    for i, step in enumerate(steps):
+        step_id = str(i + 1)
+        step_key = f"step_{step_id}"
+
+        # 查找对应的 SQL 结果
+        sql_info = None
+        for entry in sql_memory:
+            if str(entry.get("step")) == step_id:
+                sql_info = entry
+                break
+
+        if not sql_info and not python_analysis:
+            continue
+
+        parts.append(f"### {step_key}")
+        parts.append(f"**步骤编号**: {step.get('step', i + 1)}")
+        parts.append(f"**使用工具**: {step.get('tool_to_use', 'Unknown')}")
+        tp = step.get("tool_parameters") or {}
+        if tp.get("instruction"):
+            parts.append(f"**参数描述**: {tp['instruction']}")
+        if tp.get("sql_query"):
+            parts.append(f"**执行SQL**: \n```sql\n{tp['sql_query']}\n```")
+
+        if sql_info:
+            parts.append(f"**执行结果**: \n```json\n{json.dumps(sql_info.get('result', ''), ensure_ascii=False)[:2000]}\n```")
+
+    if python_analysis:
+        parts.append(f"**Python 分析结果**: {python_analysis}")
+    if python_output:
+        parts.append(f"**Python 输出**: \n```\n{python_output[:2000]}\n```")
+
+    return "\n".join(parts)
+
+
 async def _recommend_chart(sql_result: list) -> Dict[str, Any] | None:
     """推荐 ECharts 图表配置 — 对齐 Java data-view-analyze"""
     if not sql_result or len(sql_result) == 0:
         return None
-
     if not settings.enable_sql_result_chart:
         return None
-
     try:
         sample = sql_result[:5]
         columns = list(sql_result[0].keys()) if sql_result else []
-
         prompt = (
             f"数据字段: {columns}\n"
             f"总记录数: {len(sql_result)}\n"
             f"样本数据:\n{json.dumps(sample, ensure_ascii=False, indent=2)}\n\n"
             f"请推荐最合适的 ECharts 图表配置。"
         )
-
         text = await llm_service.chat(CHART_RECOMMEND_SYSTEM_PROMPT, prompt, temperature=0.0)
         return json.loads(clean_code_block(text, lang="json"))
-
     except Exception as e:
         logger.warning(f"[ReportGenerator] Chart recommendation failed: {e}")
         return None
@@ -192,66 +240,58 @@ async def _recommend_chart(sql_result: list) -> Dict[str, Any] | None:
 async def report_generator_node(state: WorkflowState) -> Dict[str, Any]:
     """报告生成节点 — 对齐 Java ReportGeneratorNode.apply()
 
-    1. 聚合所有步骤结果
-    2. LLM 动态生成 Markdown 报告
-    3. 推荐 ECharts 图表配置
-    4. 生成 HTML 报告（含 ECharts）
+    1. 加载 per-agent 自定义报告 Prompt
+    2. 构建结构化提示词 (用户需求 + 执行计划 + 数据结果)
+    3. LLM 生成 Markdown 报告
+    4. 推荐 ECharts 图表
+    5. 生成 HTML 报告
     """
     logger.info("[ReportGenerator] Generating report")
 
     user_query = get_canonical_query(state)
+    agent_id = state.get("agent_id", 0)
     sql_memory = state.get("sql_result_list_memory") or []
-    step_results = state.get("sql_step_results") or {}
     python_analysis = state.get("python_analysis", "")
     python_output = state.get("python_output", "")
     python_charts = state.get("python_charts", [])
-    thought = ""
-    plan = state.get("query_plan")
 
+    plan = state.get("query_plan")
     if isinstance(plan, str):
         try:
             plan = json.loads(plan)
         except json.JSONDecodeError:
             plan = {}
-    if plan:
-        thought = plan.get("thought_process", "")
 
     try:
-        # 构建报告上下文
-        context_parts = [
-            f"用户查询: {user_query}",
-            f"分析思路: {thought}",
-        ]
+        # 对齐 Java: 从 DB 加载自定义报告 Prompt
+        report_system_prompt = await _load_report_prompt(agent_id)
 
-        # 各 SQL 步骤结果
-        for entry in sql_memory:
-            step_num = entry.get("step", "?")
-            sql = entry.get("sql", "")
-            row_count = entry.get("row_count", 0)
-            columns = entry.get("columns", [])
-            context_parts.append(
-                f"Step {step_num} - SQL: {sql}\n"
-                f"Step {step_num} - 结果: {row_count} 行, 字段: {columns}"
-            )
+        # 构建结构化提示词 — 对齐 Java buildUserRequirementsAndPlan + buildAnalysisStepsAndData
+        user_requirements = _build_user_requirements_and_plan(user_query, plan)
+        analysis_data = _build_analysis_steps_and_data(plan, sql_memory, python_analysis, python_output)
 
-        # Python 分析
-        if python_analysis:
-            context_parts.append(f"Python 分析结论: {python_analysis}")
-        if python_output:
-            context_parts.append(f"Python 执行输出:\n{python_output}")
+        # 获取 summary_and_recommendations
+        summary_and_recommendations = ""
+        steps = plan.get("execution_plan", [])
+        for step in steps:
+            tp = step.get("tool_parameters") or {}
+            if tp.get("summary_and_recommendations"):
+                summary_and_recommendations = tp["summary_and_recommendations"]
+                break
 
-        context = "\n\n".join(context_parts)
-
-        # LLM 动态生成报告
-        report_md = await llm_service.chat(
-            REPORT_SYSTEM_PROMPT,
-            f"分析上下文:\n{context}\n\n请生成完整的 Markdown 分析报告。",
-            temperature=0.3,
+        full_user_prompt = (
+            f"{user_requirements}\n\n"
+            f"{analysis_data}\n\n"
+            f"## 报告大纲\n{summary_and_recommendations or '根据分析结果生成报告'}\n\n"
+            f"请生成完整的 Markdown 分析报告。"
         )
+
+        # LLM 生成报告
+        report_md = await llm_service.chat(report_system_prompt, full_user_prompt, temperature=0.3)
         report_md = report_md.strip()
         logger.info(f"[ReportGenerator] Generated report: {len(report_md)} chars")
 
-        # 推荐 ECharts 图表配置 — 对齐 Java data-view-analyze
+        # 推荐 ECharts 图表配置
         chart_configs = []
         if settings.enable_sql_result_chart and sql_memory:
             for entry in sql_memory:

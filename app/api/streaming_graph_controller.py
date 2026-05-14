@@ -376,11 +376,23 @@ async def stream_workflow_execution(
                         await _record_metrics("success")
                         return
 
-                # ===== 知识召回 =====
+                # ===== 知识召回 (对齐 Java EvidenceRecallNode 流式输出) =====
                 elif node_name == "knowledge_recall":
                     knowledge_items = node_output.get("knowledge_items", [])
+                    recalled = node_output.get("recalled_knowledge", "")
                     count = len(knowledge_items)
-                    text = f"正在检索相关知识...找到 {count} 条相关知识" if count else "正在检索相关知识..."
+                    # 对齐 Java: "已找到 N 条相关证据文档"
+                    if count:
+                        lines = [f"正在检索相关知识...已找到 {count} 条相关证据文档"]
+                        # 输出证据预览 (前3条，各限100字)
+                        for idx, item in enumerate(knowledge_items[:3]):
+                            content_preview = (item.get("content") or "")[:100]
+                            lines.append(f"证据{idx + 1}: {content_preview}...")
+                        text = "\n".join(lines)
+                    elif recalled and recalled != "无":
+                        text = f"正在检索相关知识...\n{recalled[:500]}"
+                    else:
+                        text = "正在检索相关知识...未找到证据文档"
                     yield _format_sse_data(_build_graph_response(
                         agent_id, thread_id, java_name, text, TEXT_TYPE_TEXT
                     ))

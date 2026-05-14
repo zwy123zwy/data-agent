@@ -3,6 +3,8 @@ chroma_data/
 
 # LangGraph checkpointer SQLite database
 checkpoints.db
+checkpoints.db-shm
+checkpoints.db-wal
 
 # OpenSpec workflow docs (local only)
 openspec/

@@ -1,20 +1,20 @@
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Text, DateTime, Integer
+from sqlalchemy import String, Text, DateTime, Integer, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from ..core.database import Base
 
 
 class Agent(Base):
-    """Agent 模型 - 对齐 Java 版本"""
+    """Agent 模型 - 对齐 Java agent 表"""
     __tablename__ = "agent"
 
     # 基础字段
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(100), nullable=False, comment="Agent名称")
+    name: Mapped[str] = mapped_column(String(255), nullable=False, comment="Agent名称")
     description: Mapped[Optional[str]] = mapped_column(Text, comment="Agent描述")
     status: Mapped[str] = mapped_column(
-        String(20),
+        String(50),
         nullable=False,
         default="draft",
         comment="状态: draft/published/offline"
@@ -23,7 +23,7 @@ class Agent(Base):
     # 扩展字段（对齐Java版本）
     avatar: Mapped[Optional[str]] = mapped_column(String(255), comment="头像URL")
     tags: Mapped[Optional[str]] = mapped_column(String(500), comment="标签，逗号分隔")
-    api_key: Mapped[Optional[str]] = mapped_column(String(64), comment="API Key")
+    api_key: Mapped[Optional[str]] = mapped_column(String(255), comment="API Key")
     api_key_enabled: Mapped[int] = mapped_column(Integer, default=0, comment="API Key是否启用: 0/1")
     prompt: Mapped[Optional[str]] = mapped_column(Text, comment="Agent自定义Prompt")
     category: Mapped[Optional[str]] = mapped_column(String(100), comment="分类")
@@ -43,6 +43,14 @@ class Agent(Base):
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
         comment="更新时间"
+    )
+
+    # 索引 — 对齐 Java
+    __table_args__ = (
+        Index("idx_name", "name"),
+        Index("idx_status", "status"),
+        Index("idx_category", "category"),
+        Index("idx_admin_id", "admin_id"),
     )
 
     def __repr__(self):

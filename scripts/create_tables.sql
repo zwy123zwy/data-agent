@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS datasource (
     type VARCHAR(20) NOT NULL COMMENT '数据库类型: mysql/postgresql/sqlite',
     host VARCHAR(255) COMMENT '主机地址',
     port INT COMMENT '端口号',
-    `database` VARCHAR(100) NOT NULL COMMENT '数据库名',
+    `database_name` VARCHAR(255) NOT NULL COMMENT '数据库名',
     username VARCHAR(100) COMMENT '用户名',
     password VARCHAR(255) COMMENT '密码',
     connection_url VARCHAR(500) COMMENT '完整连接字符串（SQLite使用）',
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS agent_datasource (
     id INT AUTO_INCREMENT PRIMARY KEY,
     agent_id INT NOT NULL COMMENT 'Agent ID',
     datasource_id INT NOT NULL COMMENT 'Datasource ID',
-    is_active BOOLEAN NOT NULL DEFAULT TRUE COMMENT '是否为当前激活的数据源',
+    is_active TINYINT NOT NULL DEFAULT 0 COMMENT '是否激活: 0=否, 1=是',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     CONSTRAINT fk_agent_datasource_agent
         FOREIGN KEY (agent_id) REFERENCES agent(id) ON DELETE CASCADE,

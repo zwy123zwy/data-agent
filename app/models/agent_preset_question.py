@@ -1,7 +1,7 @@
 """AgentPresetQuestion 预设问题模型 - 对齐 Java AgentPresetQuestion"""
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Integer, Text, DateTime, ForeignKey
+from sqlalchemy import String, Integer, Text, DateTime, ForeignKey, Index
 from sqlalchemy.orm import Mapped, mapped_column
 from ..core.database import Base
 
@@ -20,4 +20,11 @@ class AgentPresetQuestion(Base):
     create_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, comment="创建时间")
     update_time: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间"
+    )
+
+    # 索引 — 对齐 Java
+    __table_args__ = (
+        Index("idx_agent_id", "agent_id"),
+        Index("idx_sort_order", "sort_order"),
+        Index("idx_is_active", "is_active"),
     )

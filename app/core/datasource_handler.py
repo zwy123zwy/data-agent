@@ -57,7 +57,7 @@ class DatasourceTypeHandler(ABC):
         return (
             datasource.host is not None
             and datasource.port is not None
-            and datasource.database is not None
+            and datasource.database_name is not None
         )
 
     @abstractmethod
@@ -81,7 +81,7 @@ class DatasourceTypeHandler(ABC):
 
     def extract_schema_name(self, datasource) -> str:
         """提取 Schema 名 — 对齐 Java extractSchemaName()"""
-        return datasource.database
+        return datasource.database_name
 
     # ═══════════════════════════════════════════════════════════════
     # 连接配置
@@ -161,7 +161,7 @@ class MysqlTypeHandler(DatasourceTypeHandler):
             return datasource.connection_url or ""
         return (
             f"mysql+aiomysql://{datasource.username}:{datasource.password}"
-            f"@{datasource.host}:{datasource.port}/{datasource.database}"
+            f"@{datasource.host}:{datasource.port}/{datasource.database_name}"
             f"?charset=utf8mb4"
         )
 
@@ -241,7 +241,7 @@ class PostgresqlTypeHandler(DatasourceTypeHandler):
         if not self.has_required_connection_fields(datasource):
             return datasource.connection_url or ""
         # 支持 "database|schema" 格式
-        db_name = datasource.database
+        db_name = datasource.database_name
         if db_name and "|" in db_name:
             db_name = db_name.split("|")[0]
         return (
@@ -250,7 +250,7 @@ class PostgresqlTypeHandler(DatasourceTypeHandler):
         )
 
     def extract_schema_name(self, datasource) -> str:
-        db_name = datasource.database
+        db_name = datasource.database_name
         if db_name and "|" in db_name:
             parts = db_name.split("|")
             return parts[1] if len(parts) > 1 else parts[0]
@@ -347,10 +347,10 @@ class SqliteTypeHandler(DatasourceTypeHandler):
         return "sqlite"
 
     def has_required_connection_fields(self, datasource) -> bool:
-        return bool(datasource.connection_url or datasource.database)
+        return bool(datasource.connection_url or datasource.database_name)
 
     def build_connection_url(self, datasource) -> str:
-        return datasource.connection_url or f"sqlite+aiosqlite:///{datasource.database}"
+        return datasource.connection_url or f"sqlite+aiosqlite:///{datasource.database_name}"
 
     async def get_tables(self, conn: AsyncConnection, schema: str) -> List[Dict[str, Any]]:
         sql = """
@@ -390,7 +390,7 @@ class OracleTypeHandler(DatasourceTypeHandler):
             return datasource.connection_url or ""
         return (
             f"oracle+oracledb://{datasource.username}:{datasource.password}"
-            f"@{datasource.host}:{datasource.port}/?service_name={datasource.database}"
+            f"@{datasource.host}:{datasource.port}/?service_name={datasource.database_name}"
         )
 
     async def ping(self, datasource) -> tuple[bool, str]:
@@ -468,7 +468,7 @@ class SqlServerTypeHandler(DatasourceTypeHandler):
             return datasource.connection_url or ""
         return (
             f"mssql+aioodbc://{datasource.username}:{datasource.password}"
-            f"@{datasource.host}:{datasource.port}/{datasource.database}"
+            f"@{datasource.host}:{datasource.port}/{datasource.database_name}"
             f"?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
         )
 
@@ -551,7 +551,7 @@ class ClickHouseTypeHandler(DatasourceTypeHandler):
             return datasource.connection_url or ""
         return (
             f"clickhouse+asynch://{datasource.username}:{datasource.password}"
-            f"@{datasource.host}:{datasource.port}/{datasource.database}"
+            f"@{datasource.host}:{datasource.port}/{datasource.database_name}"
         )
 
     async def ping(self, datasource) -> tuple[bool, str]:
@@ -618,7 +618,7 @@ class DamengTypeHandler(DatasourceTypeHandler):
             return datasource.connection_url or ""
         return (
             f"dm+dmPython://{datasource.username}:{datasource.password}"
-            f"@{datasource.host}:{datasource.port}/{datasource.database}"
+            f"@{datasource.host}:{datasource.port}/{datasource.database_name}"
         )
 
     async def ping(self, datasource) -> tuple[bool, str]:
@@ -696,7 +696,7 @@ class HiveTypeHandler(DatasourceTypeHandler):
             return datasource.connection_url or ""
         return (
             f"hive://{datasource.username}:{datasource.password}"
-            f"@{datasource.host}:{datasource.port}/{datasource.database}"
+            f"@{datasource.host}:{datasource.port}/{datasource.database_name}"
         )
 
     async def ping(self, datasource) -> tuple[bool, str]:

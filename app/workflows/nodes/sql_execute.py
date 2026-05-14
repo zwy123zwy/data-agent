@@ -21,15 +21,15 @@ def _build_connection_url(datasource) -> str:
     if datasource.type == "mysql":
         return (
             f"mysql+aiomysql://{datasource.username}:{datasource.password}"
-            f"@{datasource.host}:{datasource.port}/{datasource.database}"
+            f"@{datasource.host}:{datasource.port}/{datasource.database_name}"
         )
     elif datasource.type == "postgresql":
         return (
             f"postgresql+asyncpg://{datasource.username}:{datasource.password}"
-            f"@{datasource.host}:{datasource.port}/{datasource.database}"
+            f"@{datasource.host}:{datasource.port}/{datasource.database_name}"
         )
     elif datasource.type == "sqlite":
-        return datasource.connection_url or f"sqlite+aiosqlite:///{datasource.database}"
+        return datasource.connection_url or f"sqlite+aiosqlite:///{datasource.database_name}"
     else:
         raise ValueError(f"Unsupported database type: {datasource.type}")
 
