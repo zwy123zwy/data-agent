@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 from ..core.database import get_db
 from ..core.model_registry import get_model_registry
+from ..core.llm import llm_service
 from ..schemas.model_config import (
     ModelConfigCreate,
     ModelConfigUpdate,
@@ -55,7 +56,7 @@ async def update_model(update_data: ModelConfigUpdate, db: AsyncSession = Depend
 
 @router.delete("/{model_id}", summary="删除模型配置")
 async def delete_model(model_id: int, db: AsyncSession = Depends(get_db)):
-    """删除模型配置 — 对齐 Java DELETE /api/model-config/{id}"""
+    """删除模型配置"""
     registry = get_model_registry(db)
     success = await registry.delete_model(model_id)
     if not success:
@@ -70,6 +71,7 @@ async def activate_model(model_id: int, db: AsyncSession = Depends(get_db)):
     model = await registry.set_default_model(model_id)
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
+    llm_service.invalidate()
     return {"success": True, "message": "模型配置已激活", "data": None}
 
 
@@ -87,6 +89,7 @@ async def test_model(request: ModelTestRequest, db: AsyncSession = Depends(get_d
         max_tokens=request.max_tokens,
         prompt=request.prompt,
     )
+    logger.info(f"[ModelTest] Result: {result}")
     if result.get("success"):
         return {"success": True, "message": "连接测试成功", "data": result.get("response", "")}
     else:

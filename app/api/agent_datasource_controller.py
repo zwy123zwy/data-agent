@@ -25,8 +25,8 @@ async def list_agent_datasources(
     agent_id: int,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """列出 Agent 的所有数据源，返回 {success, message, data: [AgentDatasourceResponse]}
-    对齐 Java GET /{agentId}/datasources
+    """
+    列出 Agent 的所有数据源，返回 {success, message, data: [AgentDatasourceResponse]}
     """
     try:
         items = await AgentDatasourceService.list_agent_datasources(db, agent_id)
@@ -44,7 +44,7 @@ async def get_active_datasource(
     agent_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """获取 Agent 当前激活的数据源 — 对齐 Java GET /{agentId}/datasources/active
+    """获取 Agent 当前激活的数据源
     返回 AgentDatasourceResponse (含 datasource + selectTables)，而非裸 Datasource。
     """
     items = await AgentDatasourceService.list_agent_datasources(db, agent_id)
@@ -64,7 +64,7 @@ async def toggle_datasource(
     dto: ToggleDatasourceRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """启用/禁用 Agent 的数据源 — 对齐 Java PUT /{agentId}/datasources/toggle"""
+    """启用/禁用 Agent 的数据源 """
     try:
         agent_ds = await AgentDatasourceService.toggle_datasource(
             db, agent_id, dto.datasource_id, dto.is_active
@@ -90,7 +90,7 @@ async def update_datasource_tables(
     dto: UpdateDatasourceTablesRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """更新 Agent 数据源选中的表 — 对齐 Java POST /{agentId}/datasources/tables
+    """更新 Agent 数据源选中的表
     前端发送 tables: [{name, comment}]，提取 name 字段存储
     """
     try:
@@ -108,7 +108,7 @@ async def init_schema(
     agent_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """初始化 Agent 的数据库 Schema 到向量存储 — 对齐 Java POST /{agentId}/datasources/init"""
+    """初始化 Agent 的数据库 Schema 到向量存储"""
     try:
         result = await AgentDatasourceService.init_schema(db, agent_id)
         if result:
@@ -130,7 +130,7 @@ async def bind_datasource(
     bind_data: AgentDatasourceCreate = AgentDatasourceCreate(),
     db: AsyncSession = Depends(get_db),
 ):
-    """绑定数据源到 Agent — 对齐 Java POST /{agentId}/datasources/{datasourceId}"""
+    """绑定数据源到 Agent"""
     try:
         agent_ds = await AgentDatasourceService.bind_datasource(
             db, agent_id, datasource_id, bind_data.is_active
@@ -155,7 +155,7 @@ async def unbind_datasource(
     datasource_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """解绑 Agent 的数据源 — 对齐 Java DELETE /{agentId}/datasources/{datasourceId}"""
+    """解绑 Agent 的数据源"""
     success = await AgentDatasourceService.unbind_datasource(db, agent_id, datasource_id)
     if not success:
         raise HTTPException(status_code=404, detail="Agent-Datasource binding not found")

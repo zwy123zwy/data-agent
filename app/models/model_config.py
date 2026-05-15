@@ -1,15 +1,13 @@
-"""
-ModelConfig ORM 模型 — 对齐 Java model_config 表
-"""
+
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Integer, Text, DateTime
+from sqlalchemy import String, Integer, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 from ..core.database import Base
 
+# 模型配置表 -基础类
 
 class ModelConfig(Base):
-    """模型配置 — 对齐 Java ModelConfig entity"""
     __tablename__ = "model_config"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

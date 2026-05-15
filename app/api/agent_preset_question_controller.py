@@ -1,9 +1,7 @@
-"""AgentPresetQuestion API — 对齐 Java AgentPresetQuestionController"""
+"""AgentPresetQuestion API """
 import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
-
 from ..core.database import get_db
 from ..services.agent_preset_question_service import AgentPresetQuestionService
 from ..services.agent_service import AgentService
@@ -22,7 +20,7 @@ router = APIRouter(prefix="/api/agent", tags=["Agent预设问题"])
     summary="获取预设问题列表",
 )
 async def get_preset_questions(agent_id: int, db: AsyncSession = Depends(get_db)):
-    """获取 Agent 的预设问题列表 — 对齐 Java GET /{agentId}/preset-questions"""
+    """获取 Agent 的预设问题列表"""
     agent = await AgentService.get_agent(db, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")
@@ -39,7 +37,7 @@ async def save_preset_questions(
     body: PresetQuestionSaveRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """批量保存预设问题（先删后增）— 对齐 Java POST /{agentId}/preset-questions"""
+    """批量保存预设问题（先删后增）"""
     agent = await AgentService.get_agent(db, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")
@@ -61,7 +59,7 @@ async def delete_preset_question(
     question_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """删除指定预设问题 — 对齐 Java DELETE /{agentId}/preset-questions/{questionId}"""
+    """删除指定预设问题"""
     agent = await AgentService.get_agent(db, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")

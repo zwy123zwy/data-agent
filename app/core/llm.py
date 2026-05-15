@@ -1,33 +1,25 @@
 """
 统一 LLM 服务 — 所有 AI 调用的唯一出口
 
-【在系统中的地位】
-  本服务是整个后端唯一的 LLM 调用入口。所有工作流节点、所有需要 AI
-  能力的模块都通过这里的 chat() / chat_stream() 调用大模型。
+【模型配置优先级】
+  1. ModelRegistry (MySQL model_config 表, is_active=1)  ← 热切换
+  2. .env 文件 (OPENAI_API_KEY/BASE/MODEL)             ← 兜底
 
-【模块连接】
-  调用者 (谁依赖 LLMService):
-    - workflows/nodes/*.py (16 个节点) → 每个节点调用 llm_service.chat()
-      例: intent_recognition → 判断意图
-          sql_generate       → 生成 SQL
-          python_generate    → 生成 Python 代码
-          report_generator   → 生成最终报告
-    - core/model_registry.py → 测试模型连接时调用
-    - services/knowledge_service.py → (间接) 通过 vector_store 生成 embedding
+【热切换流程 — 对齐 Java AiModelRegistry + LlmService】
+  1. 用户 POST /api/model-config/activate/{id}
+  2. ModelConfigOpsService → DB 更新 → llm_service.invalidate()  ← 清缓存
+  3. 下一个 LLM 调用 → _ensure_configured() 检测到 needs_rebuild
+     → 查 DB 获取激活模型 → configure() 重建客户端
+  4. 后续调用直接命中缓存，零 DB 开销
 
-  被依赖:
-    - core/config.py → 读取 OPENAI_API_KEY, OPENAI_API_BASE, OPENAI_MODEL
-    - openai.AsyncOpenAI → 底层 HTTP 客户端 (复用连接池)
-
-  Java 对应:
-    LLMService ≈ LlmService.java (Spring AI 的 ChatClient 封装)
-
-【两种调用模式】
-  chat()         → 非流式: 等待完整响应后返回 → 用于工作流节点 (需要完整结果)
-  chat_stream()  → 流式:   逐 token 返回      → 用于 SSE 场景 (前端实时显示)
+【Java 对应】
+  清缓存:  refreshChat() → currentChatClient = null
+  懒重建:  getChatClient() → if null → DB 查询 → 重建
+  Python:  invalidate() → _needs_rebuild = True
+           _ensure_configured() → if True → DB 查询 → configure()
 
 【全局单例】
-  llm_service = LLMService() — 模块级单例，所有节点共享同一个 AsyncOpenAI 连接池
+  llm_service = LLMService() — 模块级单例，所有节点共享
 """
 from typing import Optional, AsyncIterator
 from openai import AsyncOpenAI
@@ -45,42 +37,127 @@ _llm_call_counter = 0
 class LLMService:
     """LLM 服务封装 — 所有 AI 调用的统一入口
 
-    OpenAI 兼容协议: 支持任何兼容 OpenAI API 的模型服务
-      - Qwen (通义千问)
-      - DeepSeek
-      - GPT-4
-      - 本地部署的 vLLM / Ollama 等
+    热切换机制（对齐 Java）:
+      - invalidate() 标记缓存失效（activate 时调用）
+      - _ensure_configured() 在首次 chat/chat_stream 时按需重建
+      - 99%+ 的请求只是检查 _needs_rebuild flag，不查 DB
     """
 
     def __init__(self):
+        self._load_from_env()
+        self._source = "env"
+        self._needs_rebuild = True  # 启动后首次调用需要加载 DB 配置
+        self._session_factory = None
+
+    def set_session_factory(self, factory):
+        """注入异步 session 工厂（由 lifespan 启动时调用，避免循环导入）"""
+        self._session_factory = factory
+
+    def _load_from_env(self):
+        """从 .env 加载默认配置"""
         self.client = AsyncOpenAI(
             api_key=settings.openai_api_key,
-            base_url=settings.openai_api_base
+            base_url=settings.openai_api_base,
         )
         self.model = settings.openai_model
         self.temperature = settings.openai_temperature
+
+    def configure(
+        self,
+        api_key: str,
+        base_url: str,
+        model: str,
+        temperature: float = 0.0,
+    ):
+        """从 DB 热切换模型配置"""
+        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        self.model = model
+        self.temperature = temperature
+        self._source = "db"
+        logger.info(
+            "[LLMService] Hot-switched to DB model: %s @ %s (temp=%.2f)",
+            model, base_url, temperature,
+        )
+
+    def reset(self):
+        """回退到 .env 默认配置"""
+        self._load_from_env()
+        self._source = "env"
+        logger.info(
+            "[LLMService] Reset to .env model: %s @ %s",
+            self.model, settings.openai_api_base,
+        )
+
+    def invalidate(self):
+        """标记缓存失效 — 对齐 Java AiModelRegistry.refreshChat()
+
+        activate 模型后调用，不查 DB，只是设置标记。
+        下一个 chat()/chat_stream() 调用时 _ensure_configured() 会按需重建。
+        """
+        self._needs_rebuild = True
+        logger.info("[LLMService] Cache invalidated, will rebuild on next call")
+
+    async def _ensure_configured(self):
+        """按需从 DB 重建客户端 — 对齐 Java getChatClient() 的 lazy rebuild
+
+        只在 _needs_rebuild=True 时才查 DB 并重建。
+        如果 DB 中有激活的 CHAT 模型 → configure()
+        如果 DB 中没有 → reset() 回退 .env
+        """
+        if not self._needs_rebuild:
+            return
+
+        self._needs_rebuild = False
+
+        if self._session_factory is None:
+            return
+
+        try:
+            from sqlalchemy import select
+            from ..models.model_config import ModelConfig
+
+            async with self._session_factory() as db:
+                result = await db.execute(
+                    select(ModelConfig).filter(
+                        ModelConfig.model_type == "CHAT",
+                        ModelConfig.is_active == 1,
+                        ModelConfig.is_deleted == 0,
+                    )
+                )
+                model_config = result.scalar_one_or_none()
+
+                if model_config:
+                    self.configure(
+                        api_key=model_config.api_key,
+                        base_url=model_config.base_url,
+                        model=model_config.model_name,
+                        temperature=float(model_config.temperature or 0.0),
+                    )
+                elif self._source != "env":
+                    self.reset()
+        except Exception as e:
+            logger.error("[LLMService] Failed to load model from DB: %s, using env fallback", e)
+            if self._source != "env":
+                self.reset()
+
+    @property
+    def source(self) -> str:
+        """当前配置来源: 'env' 或 'db'"""
+        return self._source
 
     async def chat(
         self,
         system_prompt: str,
         user_prompt: str,
-        temperature: Optional[float] = None
+        temperature: Optional[float] = None,
     ) -> str:
-        """非流式调用 LLM
+        """非流式调用 LLM"""
+        await self._ensure_configured()
 
-        Args:
-            system_prompt: 系统提示词
-            user_prompt: 用户提示词
-            temperature: 温度参数（可选，默认使用配置值）
-
-        Returns:
-            LLM 完整响应内容
-        """
         global _llm_call_counter
         _llm_call_counter += 1
         call_id = _llm_call_counter
 
-        # 自动推断调用者
         caller = "unknown"
         for frame in inspect.stack():
             mod = frame.frame.f_globals.get("__name__", "")
@@ -92,8 +169,8 @@ class LLMService:
         input_preview = user_prompt[:200].replace("\n", "\\n")
 
         logger.info(
-            "[LLM #%d] >>> CALL model=%s caller=%s temp=%.2f input_len=%d",
-            call_id, self.model, caller, temp, len(user_prompt)
+            "[LLM #%d] >>> CALL model=%s source=%s caller=%s temp=%.2f input_len=%d",
+            call_id, self.model, self._source, caller, temp, len(user_prompt),
         )
         logger.debug("[LLM #%d] >>> INPUT: %s...", call_id, input_preview)
 
@@ -103,7 +180,7 @@ class LLMService:
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
+                    {"role": "user", "content": user_prompt},
                 ],
                 temperature=temp,
             )
@@ -111,14 +188,13 @@ class LLMService:
             elapsed = time.time() - t_start
             logger.error(
                 "[LLM #%d] <<< ERROR model=%s caller=%s elapsed=%.2fs",
-                call_id, self.model, caller, elapsed
+                call_id, self.model, caller, elapsed,
             )
             raise
 
         elapsed = time.time() - t_start
         content = response.choices[0].message.content
 
-        # Token usage
         usage = response.usage
         if usage:
             logger.info(
@@ -126,13 +202,13 @@ class LLMService:
                 "output_len=%d input_tokens=%d output_tokens=%d total_tokens=%d",
                 call_id, self.model, caller, elapsed,
                 len(content) if content else 0,
-                usage.prompt_tokens, usage.completion_tokens, usage.total_tokens
+                usage.prompt_tokens, usage.completion_tokens, usage.total_tokens,
             )
         else:
             logger.info(
                 "[LLM #%d] <<< DONE model=%s caller=%s elapsed=%.2fs output_len=%d",
                 call_id, self.model, caller, elapsed,
-                len(content) if content else 0
+                len(content) if content else 0,
             )
 
         output_preview = (content or "")[:300].replace("\n", "\\n")
@@ -144,18 +220,11 @@ class LLMService:
         self,
         system_prompt: str,
         user_prompt: str,
-        temperature: Optional[float] = None
+        temperature: Optional[float] = None,
     ) -> AsyncIterator[str]:
-        """流式调用 LLM
+        """流式调用 LLM"""
+        await self._ensure_configured()
 
-        Args:
-            system_prompt: 系统提示词
-            user_prompt: 用户提示词
-            temperature: 温度参数（可选）
-
-        Yields:
-            流式响应片段
-        """
         global _llm_call_counter
         _llm_call_counter += 1
         call_id = _llm_call_counter
@@ -170,8 +239,8 @@ class LLMService:
         temp = temperature if temperature is not None else self.temperature
 
         logger.info(
-            "[LLM #%d] >>> STREAM model=%s caller=%s temp=%.2f input_len=%d",
-            call_id, self.model, caller, temp, len(user_prompt)
+            "[LLM #%d] >>> STREAM model=%s source=%s caller=%s temp=%.2f input_len=%d",
+            call_id, self.model, self._source, caller, temp, len(user_prompt),
         )
 
         t_start = time.time()
@@ -181,7 +250,7 @@ class LLMService:
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
+                    {"role": "user", "content": user_prompt},
                 ],
                 temperature=temp,
                 stream=True,
@@ -197,7 +266,7 @@ class LLMService:
             total = "".join(total_content)
             logger.info(
                 "[LLM #%d] <<< STREAM_DONE model=%s caller=%s elapsed=%.2fs output_len=%d",
-                call_id, self.model, caller, elapsed, len(total)
+                call_id, self.model, caller, elapsed, len(total),
             )
 
 

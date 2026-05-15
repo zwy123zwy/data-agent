@@ -40,7 +40,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from .core.config import settings
-from .core.database import init_db, engine
+from .core.database import init_db, engine, async_session_maker
+from .core.llm import llm_service
 from .core.exception_handlers import register_exception_handlers
 from .core.response_middleware import ApiResponseMiddleware
 from .api import (
@@ -77,6 +78,7 @@ async def lifespan(app: FastAPI):
       5. 开始接受 HTTP 请求
     """
     await init_db()
+    llm_service.set_session_factory(async_session_maker)
     print("[OK] Database initialized")
     yield
     await engine.dispose()

@@ -1,5 +1,5 @@
 """
-ModelConfig Pydantic Schema — 对齐 Java ModelConfig DTO (camelCase)
+ModelConfig Pydantic Schema
 """
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Optional
@@ -7,7 +7,7 @@ from datetime import datetime
 
 
 class ModelConfigBase(BaseModel):
-    """模型配置基础 Schema — field alias 对齐前端/Java camelCase"""
+    """模型配置基础 Schema"""
     provider: str = Field(..., max_length=255, description="厂商标识")
     base_url: str = Field(..., max_length=255, alias="baseUrl", description="API Base URL")
     api_key: str = Field(..., max_length=255, alias="apiKey", description="API Key")
@@ -37,11 +37,12 @@ class ModelConfigBase(BaseModel):
 
 class ModelConfigCreate(ModelConfigBase):
     """创建模型配置请求"""
-    pass
+    pass   # 与基类相同
+
 
 
 class ModelConfigUpdate(BaseModel):
-    """更新模型配置请求 — id 从 body 来 (对齐 Java PUT /update)"""
+    """更新模型配置请求 """
     id: Optional[int] = Field(None, description="模型配置ID")
     provider: Optional[str] = Field(None, max_length=255, description="厂商标识")
     base_url: Optional[str] = Field(None, max_length=255, alias="baseUrl", description="API Base URL")
@@ -70,7 +71,7 @@ class ModelConfigUpdate(BaseModel):
 
 
 class ModelConfigResponse(BaseModel):
-    """模型配置响应 — camelCase 对齐前端/Java"""
+    """模型配置响应 """
     id: int
     provider: Optional[str] = None
     base_url: Optional[str] = Field(None, alias="baseUrl")
@@ -94,7 +95,7 @@ class ModelConfigResponse(BaseModel):
 
 
 class ModelTestRequest(BaseModel):
-    """模型测试请求 — 对齐 Java /test"""
+    """模型测试请求 """
     prompt: Optional[str] = Field("Hello, how are you?", description="测试提示词")
     provider: Optional[str] = Field(None, description="提供商")
     api_key: Optional[str] = Field(None, alias="apiKey", description="API Key")

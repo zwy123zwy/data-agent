@@ -1,8 +1,6 @@
 """
 模型注册表服务 — LLM 模型的动态管理和热切换
 
-对齐 Java AiModelRegistry
-
 【热切换机制】
   1. 用户 POST /api/model-config/activate/{id}
   2. 控制器调用 set_default_model(id)

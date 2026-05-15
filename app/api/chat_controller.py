@@ -71,6 +71,7 @@ async def list_sessions(agent_id: int, db: AsyncSession = Depends(get_db)):
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")
     sessions = await ChatService.list_sessions(db, agent_id)
+    logger.info(f"Agent {agent.name} has {len(sessions)} sessions")
     return [_session_to_response(s) for s in sessions]
 
 
