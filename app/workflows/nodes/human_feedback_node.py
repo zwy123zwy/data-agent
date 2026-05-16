@@ -1,37 +1,17 @@
 """
 人工反馈节点 — 对齐 Java HumanFeedbackNode
 
-【在系统中的地位】
-  这是 Human-in-the-Loop 的核心节点。它使用 LangGraph 的 interrupt() 机制
-  在图执行中途暂停，等待用户在界面上审批或拒绝执行计划。
+Harness 角色: Human-in-the-Loop (HITL) 核心节点。使用 LangGraph interrupt() 机制
+在图执行中途暂停，等待用户审批或拒绝执行计划。
 
-【模块连接】
-  上游 (由谁路由到此):
-    - plan_executor → human_review_enabled=True 时路由而来
-
-  下游 (写入 state):
-    - state["human_feedback_data"] → 用户反馈内容 (action + reason)
-    - state["human_next_node"]     → 审批通过 → plan_executor / 拒绝 → planner
-    - state["plan_repair_count"]   → 拒绝次数 (超过 MAX_REJECT_COUNT 则终止)
-
-  调用链:
-    - LangGraph interrupt() → 暂停图执行
-    - 前端通过 SSE event:paused 收到通知
-    - 用户审批后，前端再次调用 /api/stream/search?threadId=...
-    - Command(resume={...}) 恢复执行，feedback 值返回给 interrupt() 的调用处
-
-  路由 (graph.py route_after_human_feedback):
-    - approve → plan_executor (继续执行后续步骤)
-    - reject  → planner (重新生成计划)
-    - reject(超限) → END (拒绝次数太多，终止)
-
-  Java 对应:
-    human_feedback_node ≈ HumanFeedbackNode.java
-    interrupt()         ≈ CompiledGraph.interruptBefore(HUMAN_FEEDBACK_NODE)
+I/O 契约:
+  requires: query_plan, plan_repair_count
+  provides: human_feedback_data, human_next_node, plan_repair_count
 """
 from typing import Dict, Any, Literal
 from langgraph.types import interrupt
 from ..state import WorkflowState, get_current_step_number
+from ..node_base import WorkflowNode, SSEPayload
 import logging
 import json
 
@@ -70,74 +50,101 @@ def _describe_plan_for_review(state: WorkflowState) -> str:
     return "\n".join(lines)
 
 
-async def human_feedback_node(state: WorkflowState) -> Dict[str, Any]:
-    """人工反馈节点 — 对齐 Java HumanFeedbackNode.apply()
+class HumanFeedbackNode(WorkflowNode):
+    """人工反馈 — HITL 暂停点，对齐 Java HumanFeedbackNode.apply()
 
     使用 LangGraph interrupt() 暂停图执行，等待外部审批:
-    - 批准: human_feedback_data = {"action": "approve"}
-    - 拒绝: human_feedback_data = {"action": "reject", "reason": "..."}
+    - approve: routing → plan_executor（继续执行）
+    - reject:  routing → planner（重新规划），超过 MAX_REJECT_COUNT 则 END
 
-    外部通过 Command(resume=...) 恢复执行。
+    外部通过 Command(resume={"action": "approve"/"reject", "reason": "..."}) 恢复。
     """
-    plan_desc = _describe_plan_for_review(state)
-    current_step = get_current_step_number(state)
-    reject_count = state.get("plan_repair_count", 0)
 
-    logger.info(f"[HumanFeedback] Pausing for review (reject count: {reject_count}/{MAX_REJECT_COUNT})")
+    name = "human_feedback"
+    description = "HITL 暂停点 — 等待用户审批或拒绝执行计划，超限则终止"
+    requires = ["query_plan", "plan_repair_count"]
+    provides = [
+        "human_feedback_data", "human_next_node",
+        "plan_repair_count", "plan_validation_status",
+    ]
+    applicable_data_sources = ["*"]
 
-    # LangGraph interrupt — 图在此暂停，等待外部 resume
-    feedback = interrupt({
-        "type": "human_feedback",
-        "message": "请审核执行计划",
-        "plan_description": plan_desc,
-        "current_step": current_step,
-        "reject_count": reject_count,
-    })
+    async def execute(self, state: WorkflowState) -> Dict[str, Any]:
+        plan_desc = _describe_plan_for_review(state)
+        current_step = get_current_step_number(state)
+        reject_count = state.get("plan_repair_count", 0)
 
-    logger.info(f"[HumanFeedback] Received feedback: {feedback}")
+        logger.info(
+            f"[HumanFeedback] Pausing for review (reject count: {reject_count}/{MAX_REJECT_COUNT})"
+        )
 
-    if not feedback:
-        logger.warning("[HumanFeedback] No feedback provided, defaulting to approve")
-        return {
-            "human_feedback_data": {"action": "approve"},
-            "human_next_node": "plan_executor",
-        }
+        # LangGraph interrupt — 图在此暂停，等待外部 resume
+        feedback = interrupt({
+            "type": "human_feedback",
+            "message": "请审核执行计划",
+            "plan_description": plan_desc,
+            "current_step": current_step,
+            "reject_count": reject_count,
+        })
 
-    action = feedback.get("action", "approve")
+        logger.info(f"[HumanFeedback] Received feedback: {feedback}")
 
-    if action == "approve":
-        logger.info("[HumanFeedback] Plan approved, routing to PlanExecutor")
-        return {
-            "human_feedback_data": feedback,
-            "human_next_node": "plan_executor",
-            "plan_validation_status": True,
-            "human_review_enabled": False,  # 审批通过后禁用复核，防止 plan_executor 循环回到 human_feedback
-        }
-    else:
-        reason = feedback.get("reason", "用户拒绝执行计划")
-        new_reject_count = reject_count + 1
-        logger.warning(f"[HumanFeedback] Plan rejected (count {new_reject_count}): {reason}")
+        if not feedback:
+            logger.warning("[HumanFeedback] No feedback provided, defaulting to approve")
+            return {
+                "human_feedback_data": {"action": "approve"},
+                "human_next_node": "plan_executor",
+            }
 
-        if new_reject_count >= MAX_REJECT_COUNT:
-            logger.error(f"[HumanFeedback] Max reject count ({MAX_REJECT_COUNT}) exceeded, ending")
+        action = feedback.get("action", "approve")
+
+        if action == "approve":
+            logger.info("[HumanFeedback] Plan approved, routing to PlanExecutor")
+            return {
+                "human_feedback_data": feedback,
+                "human_next_node": "plan_executor",
+                "plan_validation_status": True,
+                "human_review_enabled": False,
+            }
+        else:
+            reason = feedback.get("reason", "用户拒绝执行计划")
+            new_reject_count = reject_count + 1
+            logger.warning(f"[HumanFeedback] Plan rejected (count {new_reject_count}): {reason}")
+
+            if new_reject_count >= MAX_REJECT_COUNT:
+                logger.error(
+                    f"[HumanFeedback] Max reject count ({MAX_REJECT_COUNT}) exceeded, ending"
+                )
+                return {
+                    "human_feedback_data": feedback,
+                    "plan_repair_count": new_reject_count,
+                    "plan_validation_status": False,
+                    "plan_validation_error": (
+                        f"Rejected {new_reject_count} times. Final reason: {reason}"
+                    ),
+                    "human_next_node": "end",
+                }
+
             return {
                 "human_feedback_data": feedback,
                 "plan_repair_count": new_reject_count,
                 "plan_validation_status": False,
-                "plan_validation_error": f"Rejected {new_reject_count} times. Final reason: {reason}",
-                "human_next_node": "end",
+                "plan_validation_error": reason,
+                "human_next_node": "planner",
             }
 
-        return {
-            "human_feedback_data": feedback,
-            "plan_repair_count": new_reject_count,
-            "plan_validation_status": False,
-            "plan_validation_error": reason,
-            "human_next_node": "planner",
-        }
+    def format_sse(self, output: Dict[str, Any]) -> SSEPayload | None:
+        # HumanFeedback 的 SSE 输出在 controller 中有特殊处理（interrupt 检测），
+        # 这里提供默认输出作为 fallback
+        if output.get("type") == "human_feedback":
+            return SSEPayload(
+                text=json.dumps(output, ensure_ascii=False),
+                text_type="JSON",
+            )
+        return None
 
 
-# ========== 路由函数 ==========
+# ========== 路由函数 (供 graph.py 的 conditional_edges 使用) ==========
 
 def route_after_human_feedback(state: WorkflowState) -> Literal["plan_executor", "planner", "end"]:
     """HumanFeedback 后的条件路由 — 对齐 Java HumanFeedbackDispatcher"""
@@ -149,3 +156,7 @@ def route_after_human_feedback(state: WorkflowState) -> Literal["plan_executor",
         "end": "end",
     }
     return node_map.get(next_node, "plan_executor")
+
+
+# LangGraph 兼容实例
+human_feedback_node = HumanFeedbackNode()

@@ -1,19 +1,16 @@
 """
-知识召回节点 — RAG 证据检索入口，对齐 Java EvidenceRecallNode
+知识召回节点 — 对齐 Java EvidenceRecallNode
 
-【模块连接】
-  上游: intent_recognition → intent == "data_analysis" 时路由而来
-  下游: state["recalled_knowledge"], state["recalled_business_terms"], state["recalled_agent_knowledge"]
-  路由: → query_rewrite (无条件)
+Harness 角色: RAG 证据检索入口。LLM 重写查询后进行混合检索（业务知识 + 智能体知识），
+格式化证据内容供后续节点使用。
 
-【对齐 Java EvidenceRecallNode 的关键改进】
-  1. LLM 先重写查询 (evidence-query-rewrite) 再检索
-  2. 分别检索业务知识 (business_terms) 和智能体知识 (agent_knowledge)
-  3. 格式化输出含来源归属 [来源: xxx]
-  4. FAQ/QA 类型知识特殊处理为 Q/A 格式
+I/O 契约:
+  requires: user_query, agent_id, multi_turn_context
+  provides: recalled_knowledge, recalled_business_terms, recalled_agent_knowledge, knowledge_items
 """
 from typing import Dict, Any
 from ..state import WorkflowState
+from ..node_base import WorkflowNode, SSEPayload
 from ...core.llm import llm_service
 from ...services.knowledge_service import KnowledgeService
 from ...schemas.knowledge import KnowledgeSearchRequest
@@ -87,117 +84,144 @@ def _build_agent_knowledge_content(results: list) -> str:
     return "\n".join(parts)
 
 
-async def knowledge_recall_node(state: WorkflowState) -> Dict[str, Any]:
-    """知识召回节点 — 对齐 Java EvidenceRecallNode.apply()
+class KnowledgeRecallNode(WorkflowNode):
+    """知识召回 — 对齐 Java EvidenceRecallNode.apply()
 
-    流程:
+    RAG 证据检索入口。流程:
       1. LLM 查询重写 (evidence-query-rewrite)
       2. 分别检索业务知识和智能体知识
       3. 格式化输出 (含来源归属)
     """
-    user_query = state["user_query"]
-    agent_id = state["agent_id"]
-    multi_turn = state.get("multi_turn_context", "")
 
-    logger.info(f"[EvidenceRecall] Rewriting query for evidence: {user_query}")
+    name = "knowledge_recall"
+    description = "RAG 证据检索 — 混合搜索业务知识+智能体知识，格式化含来源归属"
+    requires = ["user_query", "agent_id", "multi_turn_context"]
+    provides = ["recalled_knowledge", "recalled_business_terms", "recalled_agent_knowledge", "knowledge_items"]
+    applicable_data_sources = ["*"]
 
-    # Step 1: LLM 查询重写 — 对齐 Java evidence-query-rewrite
-    standalone_query = None
-    try:
-        rewrite_prompt = (
-            f"多轮对话上下文: {multi_turn or '(无)'}\n"
-            f"用户问题: {user_query}"
-        )
-        llm_output = await llm_service.chat(EVIDENCE_QUERY_REWRITE_PROMPT, rewrite_prompt)
-        standalone_query = _extract_standalone_query(llm_output)
-    except Exception as e:
-        logger.warning(f"[EvidenceRecall] Query rewrite failed, using original query: {e}")
+    async def execute(self, state: WorkflowState) -> Dict[str, Any]:
+        user_query = state["user_query"]
+        agent_id = state["agent_id"]
+        multi_turn = state.get("multi_turn_context", "")
 
-    search_query = standalone_query or user_query
-    logger.info(f"[EvidenceRecall] Standalone query: {search_query}")
+        logger.info(f"[EvidenceRecall] Rewriting query for evidence: {user_query}")
 
-    # Step 2: 分别检索业务知识和智能体知识
-    business_results = []
-    agent_knowledge_results = []
-
-    try:
-        async for db in get_db():
-            # 检索业务知识 (business_term) — 对齐 Java getDocumentsForAgent(BUSINESS_TERM)
-            business_request = KnowledgeSearchRequest(
-                query=search_query,
-                top_k=5,
-                type="BUSINESS_TERM",
-                enabled_only=True
+        # Step 1: LLM 查询重写 — 对齐 Java evidence-query-rewrite
+        standalone_query = None
+        try:
+            rewrite_prompt = (
+                f"多轮对话上下文: {multi_turn or '(无)'}\n"
+                f"用户问题: {user_query}"
             )
-            business_results = await KnowledgeService.search_knowledge(db, agent_id, business_request)
+            llm_output = await llm_service.chat(EVIDENCE_QUERY_REWRITE_PROMPT, rewrite_prompt)
+            standalone_query = _extract_standalone_query(llm_output)
+        except Exception as e:
+            logger.warning(f"[EvidenceRecall] Query rewrite failed, using original query: {e}")
 
-            # 检索智能体知识 (agent_knowledge) — 对齐 Java getDocumentsForAgent(AGENT_KNOWLEDGE)
-            agent_request = KnowledgeSearchRequest(
-                query=search_query,
-                top_k=5,
-                type="DOCUMENT",
-                enabled_only=True
-            )
-            agent_knowledge_results = await KnowledgeService.search_knowledge(db, agent_id, agent_request)
+        search_query = standalone_query or user_query
+        logger.info(f"[EvidenceRecall] Standalone query: {search_query}")
 
-            # 也检索 FAQ/QA 类型
-            for kt in ("FAQ", "QA"):
-                faq_request = KnowledgeSearchRequest(
+        # Step 2: 分别检索业务知识和智能体知识
+        business_results = []
+        agent_knowledge_results = []
+
+        try:
+            async for db in get_db():
+                # 检索业务知识 (business_term)
+                business_request = KnowledgeSearchRequest(
                     query=search_query,
-                    top_k=3,
-                    type=kt,
+                    top_k=5,
+                    type="BUSINESS_TERM",
                     enabled_only=True
                 )
-                faq_results = await KnowledgeService.search_knowledge(db, agent_id, faq_request)
-                agent_knowledge_results.extend(faq_results)
-    except Exception as e:
-        logger.error(f"[EvidenceRecall] Search error: {e}")
+                business_results = await KnowledgeService.search_knowledge(db, agent_id, business_request)
 
-    # Step 3: 格式化证据内容 — 对齐 Java buildFormattedEvidenceContent
-    business_content = _build_business_knowledge_content(business_results)
-    agent_content = _build_agent_knowledge_content(agent_knowledge_results)
+                # 检索智能体知识 (agent_knowledge)
+                agent_request = KnowledgeSearchRequest(
+                    query=search_query,
+                    top_k=5,
+                    type="DOCUMENT",
+                    enabled_only=True
+                )
+                agent_knowledge_results = await KnowledgeService.search_knowledge(db, agent_id, agent_request)
 
-    all_results = business_results + agent_knowledge_results
-    all_docs = [r for r in all_results if r is not None]
+                # 也检索 FAQ/QA 类型
+                for kt in ("FAQ", "QA"):
+                    faq_request = KnowledgeSearchRequest(
+                        query=search_query,
+                        top_k=3,
+                        type=kt,
+                        enabled_only=True
+                    )
+                    faq_results = await KnowledgeService.search_knowledge(db, agent_id, faq_request)
+                    agent_knowledge_results.extend(faq_results)
+        except Exception as e:
+            logger.error(f"[EvidenceRecall] Search error: {e}")
 
-    if not all_docs:
-        logger.info("[EvidenceRecall] No evidence documents found")
-        return {
-            "recalled_knowledge": "无",
-            "recalled_business_terms": "",
-            "recalled_agent_knowledge": "",
-            "knowledge_items": [],
+        # Step 3: 格式化证据内容
+        business_content = _build_business_knowledge_content(business_results)
+        agent_content = _build_agent_knowledge_content(agent_knowledge_results)
+
+        all_results = business_results + agent_knowledge_results
+        all_docs = [r for r in all_results if r is not None]
+
+        if not all_docs:
+            logger.info("[EvidenceRecall] No evidence documents found")
+            return {
+                "recalled_knowledge": "无",
+                "recalled_business_terms": "",
+                "recalled_agent_knowledge": "",
+                "knowledge_items": [],
+            }
+
+        # 使用 PromptHelper 风格模板渲染
+        recalled_knowledge = ""
+        if business_content:
+            recalled_knowledge += f"## 业务知识\n{business_content}"
+        if agent_content:
+            if recalled_knowledge:
+                recalled_knowledge += "\n\n"
+            recalled_knowledge += f"## 智能体知识\n{agent_content}"
+
+        result = {
+            "recalled_knowledge": recalled_knowledge,
+            "recalled_business_terms": business_content,
+            "recalled_agent_knowledge": agent_content,
+            "knowledge_items": [
+                {
+                    "id": r.id,
+                    "title": r.title,
+                    "content": r.content,
+                    "type": r.type,
+                    "distance": r.distance
+                }
+                for r in all_docs
+            ],
         }
 
-    # 使用 PromptHelper 风格模板渲染
-    recalled_knowledge = ""
-    if business_content:
-        recalled_knowledge += f"## 业务知识\n{business_content}"
-    if agent_content:
-        if recalled_knowledge:
-            recalled_knowledge += "\n\n"
-        recalled_knowledge += f"## 智能体知识\n{agent_content}"
+        if standalone_query and standalone_query != user_query:
+            result["canonical_query"] = standalone_query
 
-    # 如果使用了重写查询，把重写结果写入 state 供 query_rewrite 节点参考
-    result = {
-        "recalled_knowledge": recalled_knowledge,
-        "recalled_business_terms": business_content,
-        "recalled_agent_knowledge": agent_content,
-        "knowledge_items": [
-            {
-                "id": r.id,
-                "title": r.title,
-                "content": r.content,
-                "type": r.type,
-                "distance": r.distance
-            }
-            for r in all_docs
-        ],
-    }
+        logger.info(f"[EvidenceRecall] Found {len(all_docs)} evidence documents "
+                    f"(business: {len(business_results)}, agent: {len(agent_knowledge_results)})")
+        return result
 
-    if standalone_query and standalone_query != user_query:
-        result["canonical_query"] = standalone_query
+    def format_sse(self, output: Dict[str, Any]) -> SSEPayload | None:
+        knowledge_items = output.get("knowledge_items", [])
+        recalled = output.get("recalled_knowledge", "")
+        count = len(knowledge_items)
+        if count:
+            lines = [f"正在检索相关知识...已找到 {count} 条相关证据文档"]
+            for idx, item in enumerate(knowledge_items[:3]):
+                content_preview = (item.get("content") or "")[:100]
+                lines.append(f"证据{idx + 1}: {content_preview}...")
+            text = "\n".join(lines)
+        elif recalled and recalled != "无":
+            text = f"正在检索相关知识...\n{recalled[:500]}"
+        else:
+            text = "正在检索相关知识...未找到证据文档"
+        return SSEPayload(text=text, text_type="TEXT", metrics_delta={"knowledge_count": count})
 
-    logger.info(f"[EvidenceRecall] Found {len(all_docs)} evidence documents "
-                f"(business: {len(business_results)}, agent: {len(agent_knowledge_results)})")
-    return result
+
+# LangGraph 兼容实例
+knowledge_recall_node = KnowledgeRecallNode()

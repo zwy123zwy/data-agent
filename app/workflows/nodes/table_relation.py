@@ -1,9 +1,16 @@
 """
-表关系构建节点（Table Relation Node） — 对齐 Java TableRelationNode
-基于外键 + 同名字段 + LLM 推理构建表间关系
+表关系构建节点 — 对齐 Java TableRelationNode
+
+Harness 角色: 基于外键 + 同名字段 + LLM 推理构建表间关系，
+生成带方言类型的 SchemaDTO 供下游 SQL 生成节点使用。
+
+I/O 契约:
+  requires: agent_id
+  provides: schema, schema_info, db_dialect_type
 """
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from ..state import WorkflowState
+from ..node_base import WorkflowNode, SSEPayload
 from ...core.llm import llm_service
 from ...core.text_utils import clean_code_block
 from ...services.schema_service import SchemaService
@@ -75,7 +82,10 @@ def _detect_implicit_relations(tables: List[Dict[str, Any]]) -> List[Dict[str, s
 
     # 出现在多个表中的同名字段 → 潜在关系
     for col_name, occurrences in col_index.items():
-        if len(occurrences) >= 2 and col_name not in ("id", "name", "created_at", "updated_at", "create_time", "update_time", "created_time", "updated_time", "status"):
+        if len(occurrences) >= 2 and col_name not in (
+            "id", "name", "created_at", "updated_at",
+            "create_time", "update_time", "created_time", "updated_time", "status"
+        ):
             for i in range(len(occurrences)):
                 for j in range(i + 1, len(occurrences)):
                     relations.append({
@@ -107,68 +117,102 @@ async def _llm_enhance_relations(
         return {}
 
 
-async def table_relation_node(state: WorkflowState) -> Dict[str, Any]:
-    """表关系构建节点 — 对齐 Java TableRelationNode.apply()"""
-    agent_id = state["agent_id"]
+class TableRelationNode(WorkflowNode):
+    """表关系构建 — 对齐 Java TableRelationNode.apply()
 
-    try:
-        async with async_session_maker() as session:
-            datasource = await AgentDatasourceService.get_active_datasource(session, agent_id)
-            if not datasource:
-                logger.error(f"[TableRelation] Agent {agent_id}: no active datasource")
-                return {"error": "No active datasource", "table_relation_exception": "没有激活的数据源"}
+    基于外键 + 同名字段 + LLM 推理分析表间关系。
+    输出 SchemaDTO (tables + relations + dialect) 供 SQL 生成使用。
+    """
 
-            schema_data = await SchemaService.get_database_schema(datasource)
-            tables = schema_data.get("tables", [])
-            logger.info(f"[TableRelation] Processing {len(tables)} tables for agent {agent_id}")
+    name = "table_relation"
+    description = "基于外键 + 同名字段 + LLM 推理构建表间关系，输出 SchemaDTO"
+    requires = ["agent_id"]
+    provides = ["schema", "schema_info", "db_dialect_type"]
+    applicable_data_sources = ["database"]
 
-            # 收集外键关系
-            explicit_fks = []
-            for table in tables:
-                for fk in table.get("foreign_keys", []):
-                    explicit_fks.append({
-                        "fromTable": table["name"],
-                        "fromColumn": fk["column_name"],
-                        "toTable": fk["referenced_table"],
-                        "toColumn": fk["referenced_column"],
-                        "type": "explicit_fk"
-                    })
+    async def execute(self, state: WorkflowState) -> Dict[str, Any]:
+        agent_id = state["agent_id"]
 
-            # 检测隐式关系
-            implicit_rels = _detect_implicit_relations(tables)
-            logger.info(f"[TableRelation] Found {len(explicit_fks)} explicit FKs, {len(implicit_rels)} implicit relations")
+        try:
+            async with async_session_maker() as session:
+                datasource = await AgentDatasourceService.get_active_datasource(session, agent_id)
+                if not datasource:
+                    logger.error(f"[TableRelation] Agent {agent_id}: no active datasource")
+                    return {"error": "No active datasource", "table_relation_exception": "没有激活的数据源"}
 
-            # 构建 schema 文本
-            schema_text = await SchemaService.get_database_ddl(datasource)
+                schema_data = await SchemaService.get_database_schema(datasource)
+                tables = schema_data.get("tables", [])
+                logger.info(f"[TableRelation] Processing {len(tables)} tables for agent {agent_id}")
 
-            # LLM 增强
-            enhanced = await _llm_enhance_relations(schema_text, explicit_fks, implicit_rels)
-            all_relations = enhanced.get("relations", explicit_fks + implicit_rels)
-            enhanced_tables = enhanced.get("tables", tables)
+                # 收集外键关系
+                explicit_fks = []
+                for table in tables:
+                    for fk in table.get("foreign_keys", []):
+                        explicit_fks.append({
+                            "fromTable": table["name"],
+                            "fromColumn": fk["column_name"],
+                            "toTable": fk["referenced_table"],
+                            "toColumn": fk["referenced_column"],
+                            "type": "explicit_fk"
+                        })
 
-            # 获取方言类型 (通过 Handler 策略模式)
-            handler = get_handler(datasource.type)
-            dialect = handler.dialect_type() if handler else datasource.type
+                # 检测隐式关系
+                implicit_rels = _detect_implicit_relations(tables)
+                logger.info(
+                    f"[TableRelation] Found {len(explicit_fks)} explicit FKs, "
+                    f"{len(implicit_rels)} implicit relations"
+                )
 
-            # 构建输出 SchemaDTO
-            schema_dto = {
-                "tables": enhanced_tables,
-                "relations": all_relations,
-                "dialect": dialect,
-                "database": datasource.database_name,
-            }
+                # 构建 schema 文本
+                schema_text = await SchemaService.get_database_ddl(datasource)
 
+                # LLM 增强
+                enhanced = await _llm_enhance_relations(schema_text, explicit_fks, implicit_rels)
+                all_relations = enhanced.get("relations", explicit_fks + implicit_rels)
+                enhanced_tables = enhanced.get("tables", tables)
+
+                # 获取方言类型 (通过 Handler 策略模式)
+                handler = get_handler(datasource.type)
+                dialect = handler.dialect_type() if handler else datasource.type
+
+                # 构建输出 SchemaDTO
+                schema_dto = {
+                    "tables": enhanced_tables,
+                    "relations": all_relations,
+                    "dialect": dialect,
+                    "database": datasource.database_name,
+                }
+
+                return {
+                    "schema": schema_text,
+                    "schema_info": schema_dto,
+                    "db_dialect_type": dialect,
+                    "table_relation_exception": None,
+                }
+
+        except Exception as e:
+            retry_count = state.get("table_relation_retry_count", 0)
+            logger.error(f"[TableRelation] Error (retry {retry_count}): {e}")
             return {
-                "schema": schema_text,
-                "schema_info": schema_dto,
-                "db_dialect_type": dialect,
-                "table_relation_exception": None,
+                "table_relation_exception": str(e),
+                "table_relation_retry_count": retry_count + 1,
             }
 
-    except Exception as e:
-        retry_count = state.get("table_relation_retry_count", 0)
-        logger.error(f"[TableRelation] Error (retry {retry_count}): {e}")
-        return {
-            "table_relation_exception": str(e),
-            "table_relation_retry_count": retry_count + 1,
-        }
+    def format_sse(self, output: Dict[str, Any]) -> SSEPayload | None:
+        schema_info = output.get("schema_info", {})
+        if isinstance(schema_info, dict):
+            relations = schema_info.get("relations", [])
+            table_count = len(schema_info.get("tables", []))
+            rel_count = len(relations)
+            text = f"正在分析表关系...{table_count} 张表, {rel_count} 条关系"
+        else:
+            text = "正在分析表关系..."
+        return SSEPayload(
+            text=text,
+            text_type="TEXT",
+            metrics_delta={"table_count": table_count if isinstance(schema_info, dict) else 0},
+        )
+
+
+# LangGraph 兼容实例
+table_relation_node = TableRelationNode()

@@ -1,9 +1,16 @@
 """
-可行性评估节点（Feasibility Assessment Node） — 对齐 Java FeasibilityAssessmentNode
-评估 Schema + Evidence 是否足以支撑用户查询
+可行性评估节点 — 对齐 Java FeasibilityAssessmentNode
+
+Harness 角色: 评估 Schema + Evidence 是否足以支撑用户查询，
+防止在信息不足时盲目生成 SQL。不可行时路由到 END。
+
+I/O 契约:
+  requires: schema, recalled_knowledge, user_query
+  provides: feasibility_result
 """
 from typing import Dict, Any
 from ..state import WorkflowState, get_canonical_query
+from ..node_base import WorkflowNode, SSEPayload
 from ...core.llm import llm_service
 from ...core.text_utils import clean_code_block
 import logging
@@ -29,56 +36,87 @@ FEASIBILITY_SYSTEM_PROMPT = """你是一个查询可行性评估专家。
 """
 
 
-async def feasibility_node(state: WorkflowState) -> Dict[str, Any]:
-    """可行性评估节点 — 对齐 Java FeasibilityAssessmentNode.apply()"""
-    canonical_query = get_canonical_query(state)
-    schema = state.get("schema", "")
-    evidence = state.get("recalled_knowledge", "")
+class FeasibilityNode(WorkflowNode):
+    """可行性评估 — 对齐 Java FeasibilityAssessmentNode.apply()
 
-    logger.info(f"[Feasibility] Assessing query: {canonical_query[:80]}")
+    评估 Schema + Evidence 是否足以支撑用户查询。
+    不通过时返回 feasible=False → graph.py 路由到 END。
+    """
 
-    if not schema:
-        logger.warning("[Feasibility] No schema available, marking as infeasible")
-        return {
-            "feasibility_result": {
-                "feasible": False,
-                "reason": "没有可用的数据库 Schema 信息",
-                "missing_info": ["数据库表结构"],
-                "confidence": 0.0,
+    name = "feasibility"
+    description = "评估 Schema + Evidence 是否足以支撑用户查询，防止信息不足时盲目生成 SQL"
+    requires = ["schema", "recalled_knowledge", "user_query"]
+    provides = ["feasibility_result"]
+    applicable_data_sources = ["database"]
+
+    async def execute(self, state: WorkflowState) -> Dict[str, Any]:
+        canonical_query = get_canonical_query(state)
+        schema = state.get("schema", "")
+        evidence = state.get("recalled_knowledge", "")
+
+        logger.info(f"[Feasibility] Assessing query: {canonical_query[:80]}")
+
+        if not schema:
+            logger.warning("[Feasibility] No schema available, marking as infeasible")
+            return {
+                "feasibility_result": {
+                    "feasible": False,
+                    "reason": "没有可用的数据库 Schema 信息",
+                    "missing_info": ["数据库表结构"],
+                    "confidence": 0.0,
+                }
             }
-        }
 
-    try:
-        prompt = (
-            f"用户问题: {canonical_query}\n\n"
-            f"数据库 Schema:\n{schema}\n\n"
-            f"已有知识:\n{evidence}\n\n"
-            f"请评估以上信息是否足以回答用户问题。"
+        try:
+            prompt = (
+                f"用户问题: {canonical_query}\n\n"
+                f"数据库 Schema:\n{schema}\n\n"
+                f"已有知识:\n{evidence}\n\n"
+                f"请评估以上信息是否足以回答用户问题。"
+            )
+
+            text = await llm_service.chat(FEASIBILITY_SYSTEM_PROMPT, prompt, temperature=0.0)
+            result = json.loads(clean_code_block(text, lang="json"))
+
+            feasible = result.get("feasible", True)
+            reason = result.get("reason", "")
+            logger.info(f"[Feasibility] Result: feasible={feasible}, reason={reason[:80]}")
+
+            return {"feasibility_result": result}
+
+        except Exception as e:
+            logger.error(f"[Feasibility] Error: {e}")
+            # 降级：假定可行
+            return {
+                "feasibility_result": {
+                    "feasible": True,
+                    "reason": "评估出错，默认放行",
+                    "confidence": 0.5,
+                }
+            }
+
+    def format_sse(self, output: Dict[str, Any]) -> SSEPayload | None:
+        result = output.get("feasibility_result", {})
+        if isinstance(result, dict):
+            feasible = result.get("feasible", True)
+            reason = result.get("reason", "")
+            if feasible:
+                text = "正在评估查询可行性...可行"
+            else:
+                text = f"正在评估查询可行性...不可行: {reason}"
+        else:
+            text = "正在评估查询可行性..."
+        return SSEPayload(
+            text=text,
+            text_type="TEXT",
+            metrics_delta={"feasibility_pass": feasible if isinstance(result, dict) else None},
         )
 
-        text = await llm_service.chat(FEASIBILITY_SYSTEM_PROMPT, prompt, temperature=0.0)
-        result = json.loads(clean_code_block(text, lang="json"))
 
-        feasible = result.get("feasible", True)
-        reason = result.get("reason", "")
-        logger.info(f"[Feasibility] Result: feasible={feasible}, reason={reason[:80]}")
-
-        return {"feasibility_result": result}
-
-    except Exception as e:
-        logger.error(f"[Feasibility] Error: {e}")
-        # 降级：假定可行
-        return {
-            "feasibility_result": {
-                "feasible": True,
-                "reason": "评估出错，默认放行",
-                "confidence": 0.5,
-            }
-        }
-
+# ========== 路由函数 (供 graph.py 的 conditional_edges 使用) ==========
 
 def route_after_feasibility(state: WorkflowState) -> str:
-    """可行性评估后的条件路由"""
+    """可行性评估后的条件路由 — 对齐 Java FeasibilityAssessmentDispatcher"""
     result = state.get("feasibility_result", {})
     if isinstance(result, str):
         try:
@@ -88,3 +126,7 @@ def route_after_feasibility(state: WorkflowState) -> str:
     if result.get("feasible", True):
         return "planner"
     return "end"
+
+
+# LangGraph 兼容实例
+feasibility_node = FeasibilityNode()

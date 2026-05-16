@@ -1,42 +1,17 @@
 """
 SQL 生成节点 — 对齐 Java SqlGenerateNode
 
-【在系统中的地位】
-  这是 Text-to-SQL 的核心节点。它接收自然语言问题 + 数据库 Schema，
-  调用 LLM 生成 SQL 查询语句。支持首次生成和基于错误的重试。
+Harness 角色: Text-to-SQL 核心。根据 Schema + 用户问题 + 当前步骤指令，
+调用 LLM 生成 SQL 查询。支持首次生成和基于错误/语义反馈的重试。
 
-【模块连接】
-  上游 (由谁路由到此):
-    - plan_executor → 当前步骤是 SQL_GENERATE_NODE 时路由而来
-    - sql_execute   → SQL 执行失败后路由回来重试
-    - semantic_consistency → 语义校验失败后路由回来重试
-
-  下游 (写入 state):
-    - state["generated_sql"]        → 生成的 SQL 语句
-    - state["sql_generate_count"]   → 生成次数 (用于重试控制)
-    - state["sql_regenerate_reason"] → 重试原因 (清除或设置)
-
-  路由 (graph.py route_after_sql_generate):
-    - 成功 → semantic_consistency (语义校验)
-    - 失败且未超限 → sql_generate (自循环重试)
-    - 失败且超限 → END
-
-  依赖:
-    - core/llm.py:llm_service.chat() → 调用 LLM 生成 SQL
-    - core/text_utils.py:clean_code_block() → 清洗 LLM 输出 (去掉 ```sql 标记)
-    - state helper: get_canonical_query() → 获取规范查询文本
-    - state helper: get_current_instruction() → 获取当前步骤指令
-
-  Java 对应:
-    sql_generate_node ≈ SqlGenerateNode.java
-
-【首次生成 vs 重试生成】
-  首次: 基于 schema + 用户问题 + 当前步骤指令 → 生成 SQL
-  重试: 基于上次 SQL + 错误原因 + 步骤指令 → 修正 SQL
-  最多重试 max_sql_retry_count 次 (配置在 .env)
+I/O 契约:
+  requires: schema, user_query, query_plan, recalled_knowledge, db_dialect_type
+  provides: generated_sql, sql_generate_count, sql_regenerate_reason
 """
+
 from typing import Dict, Any
 from ..state import WorkflowState, get_canonical_query, get_current_instruction
+from ..node_base import WorkflowNode, SSEPayload
 from ...core.llm import llm_service
 from ...core.config import settings
 from ...core.text_utils import clean_code_block
@@ -92,88 +67,104 @@ def _extract_last_sql(state: WorkflowState) -> str:
     return state.get("generated_sql", "")
 
 
-async def sql_generate_node(state: WorkflowState) -> Dict[str, Any]:
-    """SQL 生成节点 — 对齐 Java SqlGenerateNode.apply()
+class SqlGenerateNode(WorkflowNode):
+    """SQL 生成 — 对齐 Java SqlGenerateNode.apply()
 
-    首次生成: 基于 schema + canonical query + instruction
-    重试生成: 基于 last SQL + error reason + instruction
+    Text-to-SQL 核心节点。LLM 根据数据库结构和用户问题生成 SQL。
+    首次: schema + instruction + 知识证据
+    重试: 上次 SQL + 错误原因 + instruction
     """
-    user_query = get_canonical_query(state)
-    instruction = get_current_instruction(state)
-    schema = state.get("schema", "")
-    evidence = state.get("recalled_knowledge", "")
-    dialect = state.get("db_dialect_type", "")
 
-    # 检查是否需要重试
-    regenerate_reason = state.get("sql_regenerate_reason")
-    generate_count = state.get("sql_generate_count", 0)
-    max_retry = settings.max_sql_retry_count
+    name = "sql_generate"
+    description = "将自然语言问题转为 SQL 查询语句"
+    requires = ["schema", "user_query", "query_plan", "recalled_knowledge", "db_dialect_type"]
+    provides = ["generated_sql", "sql_generate_count", "sql_regenerate_reason"]
+    applicable_data_sources = ["database"]
 
-    if regenerate_reason:
-        # === 重试模式 ===
-        last_sql = _extract_last_sql(state)
-        error_type = regenerate_reason.get("type", "unknown")
-        error_reason = regenerate_reason.get("reason", str(regenerate_reason))
+    async def execute(self, state: WorkflowState) -> Dict[str, Any]:
+        user_query = get_canonical_query(state)
+        instruction = get_current_instruction(state)
+        schema = state.get("schema", "")
+        evidence = state.get("recalled_knowledge", "")
+        dialect = state.get("db_dialect_type", "")
 
-        logger.info(
-            f"[SqlGenerate] Retry {generate_count}/{max_retry}, "
-            f"error_type={error_type}, reason={error_reason[:80]}"
-        )
+        regenerate_reason = state.get("sql_regenerate_reason")
+        generate_count = state.get("sql_generate_count", 0)
+        max_retry = settings.max_sql_retry_count
 
-        if generate_count >= max_retry:
-            logger.error(f"[SqlGenerate] Max retry ({max_retry}) exceeded")
-            return {
-                "sql_generate_count": generate_count + 1,
-                "error": f"SQL 生成失败，已重试 {max_retry} 次，最后错误: {error_reason}",
-            }
+        if regenerate_reason:
+            last_sql = _extract_last_sql(state)
+            error_type = regenerate_reason.get("type", "unknown")
+            error_reason = regenerate_reason.get("reason", str(regenerate_reason))
 
-        retry_prompt = _build_retry_prompt(
-            last_sql, error_type, error_reason, instruction
-        )
+            logger.info(
+                f"[SqlGenerate] Retry {generate_count}/{max_retry}, "
+                f"error_type={error_type}, reason={error_reason[:80]}"
+            )
 
-        try:
-            sql = await llm_service.chat(SQL_GENERATION_SYSTEM_PROMPT, retry_prompt, temperature=0.0)
-            sql = clean_code_block(sql, lang="sql")
-            logger.info(f"[SqlGenerate] Retry SQL: {sql[:100]}...")
-            return {
-                "generated_sql": sql,
-                "sql_generate_count": generate_count + 1,
-                "sql_regenerate_reason": None,
-            }
-        except Exception as e:
-            logger.error(f"[SqlGenerate] Retry error: {e}")
-            return {
-                "sql_generate_count": generate_count + 1,
-                "sql_regenerate_reason": {"type": "generate", "reason": str(e)},
-            }
-    else:
-        # === 首次生成模式 ===
-        logger.info(f"[SqlGenerate] First generation for: {instruction[:80]}")
+            if generate_count >= max_retry:
+                logger.error(f"[SqlGenerate] Max retry ({max_retry}) exceeded")
+                return {
+                    "sql_generate_count": generate_count + 1,
+                    "error": f"SQL 生成失败，已重试 {max_retry} 次，最后错误: {error_reason}",
+                }
 
-        if not schema:
-            return {"error": "No schema information available"}
+            retry_prompt = _build_retry_prompt(last_sql, error_type, error_reason, instruction)
+            try:
+                sql = await llm_service.chat(SQL_GENERATION_SYSTEM_PROMPT, retry_prompt, temperature=0.0)
+                sql = clean_code_block(sql, lang="sql")
+                logger.info(f"[SqlGenerate] Retry SQL: {sql[:100]}...")
+                return {
+                    "generated_sql": sql,
+                    "sql_generate_count": generate_count + 1,
+                    "sql_regenerate_reason": None,
+                }
+            except Exception as e:
+                logger.error(f"[SqlGenerate] Retry error: {e}")
+                return {
+                    "sql_generate_count": generate_count + 1,
+                    "sql_regenerate_reason": {"type": "generate", "reason": str(e)},
+                }
+        else:
+            logger.info(f"[SqlGenerate] First generation for: {instruction[:80]}")
+            if not schema:
+                return {"error": "No schema information available"}
 
-        prompt = (
-            f"数据库方言: {dialect}\n\n"
-            f"数据库 Schema:\n{schema}\n\n"
-            f"知识证据:\n{evidence}\n\n"
-            f"用户问题: {user_query}\n\n"
-            f"当前步骤需求: {instruction}\n\n"
-            f"请生成 SQL 查询语句。"
-        )
+            prompt = (
+                f"数据库方言: {dialect}\n\n"
+                f"数据库 Schema:\n{schema}\n\n"
+                f"知识证据:\n{evidence}\n\n"
+                f"用户问题: {user_query}\n\n"
+                f"当前步骤需求: {instruction}\n\n"
+                f"请生成 SQL 查询语句。"
+            )
 
-        try:
-            sql = await llm_service.chat(SQL_GENERATION_SYSTEM_PROMPT, prompt, temperature=0.0)
-            sql = clean_code_block(sql, lang="sql")
-            logger.info(f"[SqlGenerate] Generated SQL: {sql[:100]}...")
-            return {
-                "generated_sql": sql,
-                "sql_generate_count": 1,
-                "sql_regenerate_reason": None,
-            }
-        except Exception as e:
-            logger.error(f"[SqlGenerate] Error: {e}")
-            return {
-                "error": f"SQL generation failed: {str(e)}",
-                "sql_generate_count": generate_count + 1,
-            }
+            try:
+                sql = await llm_service.chat(SQL_GENERATION_SYSTEM_PROMPT, prompt, temperature=0.0)
+                sql = clean_code_block(sql, lang="sql")
+                logger.info(f"[SqlGenerate] Generated SQL: {sql[:100]}...")
+                return {
+                    "generated_sql": sql,
+                    "sql_generate_count": 1,
+                    "sql_regenerate_reason": None,
+                }
+            except Exception as e:
+                logger.error(f"[SqlGenerate] Error: {e}")
+                return {
+                    "error": f"SQL generation failed: {str(e)}",
+                    "sql_generate_count": generate_count + 1,
+                }
+
+    def format_sse(self, output: Dict[str, Any]) -> SSEPayload | None:
+        sql = output.get("generated_sql", "")
+        if sql:
+            return SSEPayload(
+                text=sql,
+                text_type="SQL",
+                metrics_delta={"sql_generated": True},
+            )
+        return None
+
+
+# LangGraph 兼容实例
+sql_generate_node = SqlGenerateNode()

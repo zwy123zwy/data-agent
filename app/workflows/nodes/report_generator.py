@@ -1,18 +1,16 @@
 """
 报告生成节点 — 对齐 Java ReportGeneratorNode
 
-【模块连接】
-  上游: plan_executor → 所有执行步骤完成后路由而来
-  下游: state["report"], state["html_report"], state["markdown_report"], state["display_style"]
-  路由: → END
+Harness 角色: 工作流的终端节点。汇总所有执行步骤的结果，
+调用 LLM 生成 Markdown 分析报告 + ECharts 图表推荐 + HTML 渲染。
 
-【对齐 Java ReportGeneratorNode 的改进】
-  1. 从 DB 加载 UserPromptConfig (report-generator 类型) 自定义提示词
-  2. 结构化提示词: 用户需求 + 执行计划 + 数据结果 + Python分析 + 总结建议
-  3. 支持 per-agent 自定义报告模板
+I/O 契约:
+  requires: user_query, query_plan, sql_result_list_memory, python_analysis, python_output
+  provides: report, html_report, markdown_report, display_style
 """
 from typing import Dict, Any
 from ..state import WorkflowState, get_canonical_query
+from ..node_base import WorkflowNode, SSEPayload
 from ...core.llm import llm_service
 from ...core.config import settings
 from ...core.text_utils import clean_code_block
@@ -205,7 +203,10 @@ def _build_analysis_steps_and_data(plan: dict, sql_memory: list,
             parts.append(f"**执行SQL**: \n```sql\n{tp['sql_query']}\n```")
 
         if sql_info:
-            parts.append(f"**执行结果**: \n```json\n{json.dumps(sql_info.get('result', ''), ensure_ascii=False)[:2000]}\n```")
+            parts.append(
+                f"**执行结果**: \n```json\n"
+                f"{json.dumps(sql_info.get('result', ''), ensure_ascii=False)[:2000]}\n```"
+            )
 
     if python_analysis:
         parts.append(f"**Python 分析结果**: {python_analysis}")
@@ -237,83 +238,99 @@ async def _recommend_chart(sql_result: list) -> Dict[str, Any] | None:
         return None
 
 
-async def report_generator_node(state: WorkflowState) -> Dict[str, Any]:
-    """报告生成节点 — 对齐 Java ReportGeneratorNode.apply()
+class ReportGeneratorNode(WorkflowNode):
+    """报告生成 — 对齐 Java ReportGeneratorNode.apply()
 
+    终端节点，汇总所有步骤结果生成最终报告:
     1. 加载 per-agent 自定义报告 Prompt
-    2. 构建结构化提示词 (用户需求 + 执行计划 + 数据结果)
+    2. 构建结构化提示词 (用户需求 + 执行计划 + 数据结果 + Python 分析)
     3. LLM 生成 Markdown 报告
-    4. 推荐 ECharts 图表
-    5. 生成 HTML 报告
+    4. 推荐 ECharts 图表配置
+    5. 生成 HTML 报告（含 ECharts 渲染）
     """
-    logger.info("[ReportGenerator] Generating report")
 
-    user_query = get_canonical_query(state)
-    agent_id = state.get("agent_id", 0)
-    sql_memory = state.get("sql_result_list_memory") or []
-    python_analysis = state.get("python_analysis", "")
-    python_output = state.get("python_output", "")
-    python_charts = state.get("python_charts", [])
+    name = "report_generator"
+    description = "汇总所有步骤结果，生成 Markdown 报告 + ECharts 图表 + HTML 渲染"
+    requires = [
+        "user_query", "query_plan", "sql_result_list_memory",
+        "python_analysis", "python_output", "python_charts",
+    ]
+    provides = ["report", "html_report", "markdown_report", "display_style"]
+    applicable_data_sources = ["*"]
 
-    plan = state.get("query_plan")
-    if isinstance(plan, str):
+    async def execute(self, state: WorkflowState) -> Dict[str, Any]:
+        logger.info("[ReportGenerator] Generating report")
+
+        user_query = get_canonical_query(state)
+        agent_id = state.get("agent_id", 0)
+        sql_memory = state.get("sql_result_list_memory") or []
+        python_analysis = state.get("python_analysis", "")
+        python_output = state.get("python_output", "")
+        python_charts = state.get("python_charts", [])
+
+        plan = state.get("query_plan")
+        if isinstance(plan, str):
+            try:
+                plan = json.loads(plan)
+            except json.JSONDecodeError:
+                plan = {}
+
         try:
-            plan = json.loads(plan)
-        except json.JSONDecodeError:
-            plan = {}
+            # 对齐 Java: 从 DB 加载自定义报告 Prompt
+            report_system_prompt = await _load_report_prompt(agent_id)
 
-    try:
-        # 对齐 Java: 从 DB 加载自定义报告 Prompt
-        report_system_prompt = await _load_report_prompt(agent_id)
+            # 构建结构化提示词
+            user_requirements = _build_user_requirements_and_plan(user_query, plan)
+            analysis_data = _build_analysis_steps_and_data(
+                plan, sql_memory, python_analysis, python_output
+            )
 
-        # 构建结构化提示词 — 对齐 Java buildUserRequirementsAndPlan + buildAnalysisStepsAndData
-        user_requirements = _build_user_requirements_and_plan(user_query, plan)
-        analysis_data = _build_analysis_steps_and_data(plan, sql_memory, python_analysis, python_output)
+            # 获取 summary_and_recommendations
+            summary_and_recommendations = ""
+            steps = plan.get("execution_plan", [])
+            for step in steps:
+                tp = step.get("tool_parameters") or {}
+                if tp.get("summary_and_recommendations"):
+                    summary_and_recommendations = tp["summary_and_recommendations"]
+                    break
 
-        # 获取 summary_and_recommendations
-        summary_and_recommendations = ""
-        steps = plan.get("execution_plan", [])
-        for step in steps:
-            tp = step.get("tool_parameters") or {}
-            if tp.get("summary_and_recommendations"):
-                summary_and_recommendations = tp["summary_and_recommendations"]
-                break
+            full_user_prompt = (
+                f"{user_requirements}\n\n"
+                f"{analysis_data}\n\n"
+                f"## 报告大纲\n{summary_and_recommendations or '根据分析结果生成报告'}\n\n"
+                f"请生成完整的 Markdown 分析报告。"
+            )
 
-        full_user_prompt = (
-            f"{user_requirements}\n\n"
-            f"{analysis_data}\n\n"
-            f"## 报告大纲\n{summary_and_recommendations or '根据分析结果生成报告'}\n\n"
-            f"请生成完整的 Markdown 分析报告。"
-        )
+            # LLM 生成报告
+            report_md = await llm_service.chat(
+                report_system_prompt, full_user_prompt, temperature=0.3
+            )
+            report_md = report_md.strip()
+            logger.info(f"[ReportGenerator] Generated report: {len(report_md)} chars")
 
-        # LLM 生成报告
-        report_md = await llm_service.chat(report_system_prompt, full_user_prompt, temperature=0.3)
-        report_md = report_md.strip()
-        logger.info(f"[ReportGenerator] Generated report: {len(report_md)} chars")
+            # 推荐 ECharts 图表配置
+            chart_configs = []
+            if settings.enable_sql_result_chart and sql_memory:
+                for entry in sql_memory:
+                    result = entry.get("result")
+                    if result:
+                        cfg = await _recommend_chart(result)
+                        if cfg:
+                            chart_configs.append(cfg)
 
-        # 推荐 ECharts 图表配置
-        chart_configs = []
-        if settings.enable_sql_result_chart and sql_memory:
-            for entry in sql_memory:
-                result = entry.get("result")
-                if result:
-                    cfg = await _recommend_chart(result)
-                    if cfg:
-                        chart_configs.append(cfg)
+            # 生成 HTML
+            html_report = generate_html_report(report_md, chart_configs, state)
 
-        # 生成 HTML
-        html_report = generate_html_report(report_md, chart_configs, state)
+            return {
+                "report": report_md,
+                "html_report": html_report,
+                "markdown_report": report_md,
+                "display_style": chart_configs[0] if chart_configs else None,
+            }
 
-        return {
-            "report": report_md,
-            "html_report": html_report,
-            "markdown_report": report_md,
-            "display_style": chart_configs[0] if chart_configs else None,
-        }
-
-    except Exception as e:
-        logger.error(f"[ReportGenerator] Error: {e}")
-        fallback_md = f"""# 数据分析报告
+        except Exception as e:
+            logger.error(f"[ReportGenerator] Error: {e}")
+            fallback_md = f"""# 数据分析报告
 
 ## 查询
 {user_query}
@@ -324,9 +341,37 @@ async def report_generator_node(state: WorkflowState) -> Dict[str, Any]:
 ## 备注
 报告生成过程中出现错误: {str(e)}
 """
-        return {
-            "report": fallback_md,
-            "html_report": generate_html_report(fallback_md, [], state),
-            "markdown_report": fallback_md,
-            "error": str(e),
-        }
+            return {
+                "report": fallback_md,
+                "html_report": generate_html_report(fallback_md, [], state),
+                "markdown_report": fallback_md,
+                "error": str(e),
+            }
+
+    def format_sse(self, output: Dict[str, Any]) -> SSEPayload | None:
+        html_report = output.get("html_report", "")
+        report = output.get("report", "")
+        markdown_report = output.get("markdown_report", "")
+        if html_report:
+            return SSEPayload(
+                text=html_report,
+                text_type="HTML",
+                metrics_delta={"report_generated": True},
+            )
+        elif markdown_report:
+            return SSEPayload(
+                text=markdown_report,
+                text_type="MARK_DOWN",
+                metrics_delta={"report_generated": True},
+            )
+        elif report:
+            return SSEPayload(
+                text=report,
+                text_type="MARK_DOWN",
+                metrics_delta={"report_generated": True},
+            )
+        return None
+
+
+# LangGraph 兼容实例
+report_generator_node = ReportGeneratorNode()

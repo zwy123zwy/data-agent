@@ -1,9 +1,17 @@
 """
-Python 代码生成节点（Python Generate Node） — 对齐 Java PythonGenerateNode
-增强 Prompt: Schema + 样本数据 + Plan 描述 + 内存/超时约束 + 重试反馈
+Python 代码生成节点 — 对齐 Java PythonGenerateNode
+
+Harness 角色: 基于 SQL 结果 + Schema + 用户意图，调用 LLM 生成
+Python 数据分析代码。支持首次生成和基于错误的自动重试。
+
+I/O 契约:
+  requires: schema, sql_result, user_query, query_plan
+  provides: python_code, python_error
 """
+
 from typing import Dict, Any
 from ..state import WorkflowState, get_canonical_query, get_current_instruction
+from ..node_base import WorkflowNode, SSEPayload
 from ...core.llm import llm_service
 from ...core.config import settings
 from ...core.text_utils import clean_code_block
@@ -55,7 +63,7 @@ PYTHON_RETRY_PROMPT = """上次生成的代码执行失败，请根据错误信�
 
 
 def _get_sample_data(state: WorkflowState, max_rows: int = 5) -> str:
-    """获取 SQL 结果的前几条样本数据"""
+    """获取 SQL 结果的前几条样本数据，供 LLM 参考"""
     sql_result = state.get("sql_result")
     if not sql_result:
         return "无"
@@ -63,86 +71,102 @@ def _get_sample_data(state: WorkflowState, max_rows: int = 5) -> str:
     return str(sample)
 
 
-async def python_generate_node(state: WorkflowState) -> Dict[str, Any]:
-    """Python 代码生成节点 — 对齐 Java PythonGenerateNode.apply()
+class PythonGenerateNode(WorkflowNode):
+    """Python 代码生成 — 对齐 Java PythonGenerateNode.apply()
 
-    首次生成: Schema + 样本数据(前5条) + Plan 描述 + 内存/超时约束
+    首次生成: Schema + 样本数据（前5行）+ instruction + 内存/超时约束
     重试生成: 上次代码 + 错误信息 + instruction
     """
-    instruction = get_current_instruction(state)
-    user_query = get_canonical_query(state)
-    schema = state.get("schema", "")
 
-    # 判断是否为重试
-    last_code = state.get("python_code")
-    last_error = state.get("python_error")
-    tries_count = state.get("python_tries_count", 0)
-    is_retry = last_code and last_error and tries_count > 0
+    name = "python_generate"
+    description = "基于数据和意图生成 Python 分析代码"
+    requires = ["schema", "sql_result", "user_query", "query_plan"]
+    provides = ["python_code", "python_error"]
+    applicable_data_sources = ["*"]
 
-    if is_retry:
-        # === 重试模式 ===
-        logger.info(f"[PythonGenerate] Retry {tries_count}/{settings.code_executor.python_max_tries_count}")
+    async def execute(self, state: WorkflowState) -> Dict[str, Any]:
+        instruction = get_current_instruction(state)
+        user_query = get_canonical_query(state)
+        schema = state.get("schema", "")
 
-        retry_prompt = PYTHON_RETRY_PROMPT.format(
-            last_code=last_code,
-            error_info=last_error,
-            instruction=instruction,
-        )
+        last_code = state.get("python_code")
+        last_error = state.get("python_error")
+        tries_count = state.get("python_tries_count", 0)
+        is_retry = last_code and last_error and tries_count > 0
 
-        try:
-            system_msg = PYTHON_GENERATION_SYSTEM_PROMPT.format(
-                limit_memory=settings.code_executor.limit_memory,
-                code_timeout=settings.code_executor.code_timeout,
+        if is_retry:
+            logger.info(
+                f"[PythonGenerate] Retry {tries_count}/{settings.code_executor.python_max_tries_count}"
             )
-            code = await llm_service.chat(system_msg, retry_prompt, temperature=0.0)
-            code = clean_code_block(code, lang="python")
-            logger.info(f"[PythonGenerate] Retry code: {len(code)} chars")
-            return {"python_code": code, "python_error": None}
-        except Exception as e:
-            logger.error(f"[PythonGenerate] Retry error: {e}")
-            return {"python_error": str(e)}
-
-    else:
-        # === 首次生成模式 ===
-        sql_result = state.get("sql_result")
-        if not sql_result:
-            logger.warning("[PythonGenerate] No SQL result available for code generation")
-            return {"python_code": None, "python_error": "No SQL result available"}
-
-        sample_data = _get_sample_data(state)
-        logger.info(f"[PythonGenerate] First generation for {len(sql_result)} records, instruction: {instruction[:80]}")
-
-        # 汇总所有 SQL 步骤结果供代码参考
-        sql_memory = state.get("sql_result_list_memory") or []
-        memory_desc = ""
-        if len(sql_memory) > 1:
-            memory_desc = f"\n历史 SQL 步骤结果:\n"
-            for entry in sql_memory[:-1]:
-                memory_desc += (
-                    f"  - Step {entry.get('step')}: "
-                    f"{entry.get('row_count', 0)} rows, "
-                    f"SQL: {entry.get('sql', '')[:100]}\n"
+            retry_prompt = PYTHON_RETRY_PROMPT.format(
+                last_code=last_code,
+                error_info=last_error,
+                instruction=instruction,
+            )
+            try:
+                system_msg = PYTHON_GENERATION_SYSTEM_PROMPT.format(
+                    limit_memory=settings.code_executor.limit_memory,
+                    code_timeout=settings.code_executor.code_timeout,
                 )
+                code = await llm_service.chat(system_msg, retry_prompt, temperature=0.0)
+                code = clean_code_block(code, lang="python")
+                logger.info(f"[PythonGenerate] Retry code: {len(code)} chars")
+                return {"python_code": code, "python_error": None}
+            except Exception as e:
+                logger.error(f"[PythonGenerate] Retry error: {e}")
+                return {"python_error": str(e)}
+        else:
+            sql_result = state.get("sql_result")
+            if not sql_result:
+                logger.warning("[PythonGenerate] No SQL result available for code generation")
+                return {"python_code": None, "python_error": "No SQL result available"}
 
-        prompt = (
-            f"数据库 Schema:\n{schema}\n\n"
-            f"用户问题: {user_query}\n\n"
-            f"当前步骤需求: {instruction}\n\n"
-            f"SQL 查询结果样本（前5条）:\n{sample_data}\n\n"
-            f"总记录数: {len(sql_result)}\n"
-            f"{memory_desc}"
-            f"请生成 Python 数据分析代码。"
-        )
-
-        try:
-            system_msg = PYTHON_GENERATION_SYSTEM_PROMPT.format(
-                limit_memory=settings.code_executor.limit_memory,
-                code_timeout=settings.code_executor.code_timeout,
+            sample_data = _get_sample_data(state)
+            logger.info(
+                f"[PythonGenerate] First generation for {len(sql_result)} records, "
+                f"instruction: {instruction[:80]}"
             )
-            code = await llm_service.chat(system_msg, prompt, temperature=0.0)
-            code = clean_code_block(code, lang="python")
-            logger.info(f"[PythonGenerate] Generated {len(code)} chars of code")
-            return {"python_code": code}
-        except Exception as e:
-            logger.error(f"[PythonGenerate] Error: {e}")
-            return {"python_code": None, "error": f"Python code generation failed: {str(e)}"}
+
+            sql_memory = state.get("sql_result_list_memory") or []
+            memory_desc = ""
+            if len(sql_memory) > 1:
+                memory_desc = "历史 SQL 步骤结果:\n"
+                for entry in sql_memory[:-1]:
+                    memory_desc += (
+                        f"  - Step {entry.get('step')}: "
+                        f"{entry.get('row_count', 0)} rows, "
+                        f"SQL: {entry.get('sql', '')[:100]}\n"
+                    )
+
+            prompt = (
+                f"数据库 Schema:\n{schema}\n\n"
+                f"用户问题: {user_query}\n\n"
+                f"当前步骤需求: {instruction}\n\n"
+                f"SQL 查询结果样本（前5条）:\n{sample_data}\n\n"
+                f"总记录数: {len(sql_result)}\n"
+                f"{memory_desc}"
+                f"请生成 Python 数据分析代码。"
+            )
+
+            try:
+                system_msg = PYTHON_GENERATION_SYSTEM_PROMPT.format(
+                    limit_memory=settings.code_executor.limit_memory,
+                    code_timeout=settings.code_executor.code_timeout,
+                )
+                code = await llm_service.chat(system_msg, prompt, temperature=0.0)
+                code = clean_code_block(code, lang="python")
+                logger.info(f"[PythonGenerate] Generated {len(code)} chars of code")
+                return {"python_code": code}
+            except Exception as e:
+                logger.error(f"[PythonGenerate] Error: {e}")
+                return {"python_code": None, "error": f"Python code generation failed: {str(e)}"}
+
+    def format_sse(self, output: Dict[str, Any]) -> SSEPayload | None:
+        code = output.get("python_code", "")
+        if code:
+            return SSEPayload(text=code, text_type="PYTHON")
+        return None
+
+
+# LangGraph 兼容实例
+python_generate_node = PythonGenerateNode()

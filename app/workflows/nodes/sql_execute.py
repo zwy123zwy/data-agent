@@ -1,11 +1,18 @@
 """
-SQL 执行节点（SQL Execute Node） — 对齐 Java SqlExecuteNode
-执行 SQL 并回写结果到执行计划，支持图表配置推荐
+SQL 执行节点 — 对齐 Java SqlExecuteNode
+
+Harness 角色: 执行 LLM 生成的 SQL，回写结果到执行计划和内存。
+支持安全校验（只允许只读语句）、图表配置推荐和数据序列化。
+
+I/O 契约:
+  requires: agent_id, generated_sql, query_plan
+  provides: sql_result, sql_result_list_memory, sql_step_results, sql_error, sql_regenerate_reason
 """
 from typing import Dict, Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from ..state import WorkflowState, get_current_step_number
+from ..node_base import WorkflowNode, SSEPayload
 from ...services.agent_datasource_service import AgentDatasourceService
 from ...core.database import async_session_maker
 from ...core.config import settings
@@ -52,103 +59,137 @@ def _serialize_row(row, columns) -> Dict[str, Any]:
     return result
 
 
-async def sql_execute_node(state: WorkflowState) -> Dict[str, Any]:
-    """SQL 执行节点 — 对齐 Java SqlExecuteNode.apply()
+class SqlExecuteNode(WorkflowNode):
+    """SQL 执行 — 对齐 Java SqlExecuteNode.apply()
 
-    1. 执行 SQL
-    2. 回写 sql_query 到当前步骤的 tool_parameters
-    3. 存储结果到 sql_result_list_memory (供 Python 节点使用)
-    4. 存储分步结果到 sql_step_results
+    1. 安全校验（只允许 SELECT/WITH/EXPLAIN）
+    2. 执行 SQL 并序列化结果
+    3. 回写 sql_query 到当前步骤的 tool_parameters
+    4. 追加到 sql_result_list_memory（供 Python 节点使用）
+    5. 递增 plan_current_step（当前步骤完成）
     """
-    agent_id = state["agent_id"]
-    sql = state.get("generated_sql")
 
-    if not sql:
-        logger.warning("[SqlExecute] No SQL to execute")
-        return {"sql_error": "No SQL to execute"}
+    name = "sql_execute"
+    description = "安全校验 + 执行 SQL + 回写结果到执行计划内存，支持重试反馈"
+    requires = ["agent_id", "generated_sql", "query_plan"]
+    provides = [
+        "sql_result", "sql_result_list_memory", "sql_step_results",
+        "sql_error", "sql_regenerate_reason", "plan_current_step",
+    ]
+    applicable_data_sources = ["database"]
 
-    current_step = get_current_step_number(state)
-    logger.info(f"[SqlExecute] Step {current_step}: executing SQL ({len(sql)} chars)")
+    async def execute(self, state: WorkflowState) -> Dict[str, Any]:
+        agent_id = state["agent_id"]
+        sql = state.get("generated_sql")
 
-    # ★ SQL 安全校验 — 只允许 SELECT/WITH/EXPLAIN 等只读语句
-    safety_error = validate_sql_safety(sql)
-    if safety_error:
-        logger.warning(f"[SqlExecute] SQL rejected by safety validator: {safety_error}")
-        logger.warning(f"[SqlExecute] Rejected SQL: {sql[:200]}")
-        return {
-            "sql_error": f"SQL 安全校验失败: {safety_error}",
-            "sql_regenerate_reason": {"type": "safety", "reason": safety_error},
-        }
+        if not sql:
+            logger.warning("[SqlExecute] No SQL to execute")
+            return {"sql_error": "No SQL to execute"}
 
-    try:
-        async with async_session_maker() as session:
-            datasource = await AgentDatasourceService.get_active_datasource(session, agent_id)
-            if not datasource:
-                return {"sql_error": "No active datasource found"}
+        current_step = get_current_step_number(state)
+        logger.info(f"[SqlExecute] Step {current_step}: executing SQL ({len(sql)} chars)")
 
-            db_url = _build_connection_url(datasource)
-            temp_engine = create_async_engine(db_url, echo=False)
+        # SQL 安全校验 — 只允许 SELECT/WITH/EXPLAIN 等只读语句
+        safety_error = validate_sql_safety(sql)
+        if safety_error:
+            logger.warning(f"[SqlExecute] SQL rejected by safety validator: {safety_error}")
+            logger.warning(f"[SqlExecute] Rejected SQL: {sql[:200]}")
+            return {
+                "sql_error": f"SQL 安全校验失败: {safety_error}",
+                "sql_regenerate_reason": {"type": "safety", "reason": safety_error},
+            }
 
-            try:
-                async with temp_engine.connect() as conn:
-                    result = await conn.execute(text(sql))
-                    rows = result.fetchall()
-                    columns = list(result.keys())
+        try:
+            async with async_session_maker() as session:
+                datasource = await AgentDatasourceService.get_active_datasource(session, agent_id)
+                if not datasource:
+                    return {"sql_error": "No active datasource found"}
 
-                    sql_result = [_serialize_row(row, columns) for row in rows]
-                    logger.info(f"[SqlExecute] Got {len(sql_result)} rows, {len(columns)} columns")
+                db_url = _build_connection_url(datasource)
+                temp_engine = create_async_engine(db_url, echo=False)
 
-                    # 回写 SQL 到当前步骤的 tool_parameters
-                    plan = state.get("query_plan")
-                    if isinstance(plan, str):
-                        plan = json.loads(plan)
-                    if plan:
-                        steps = plan.get("execution_plan") or plan.get("steps", [])
-                        idx = current_step - 1
-                        if 0 <= idx < len(steps):
-                            tp = steps[idx].get("tool_parameters") or {}
-                            tp["sql_query"] = sql
-                            steps[idx]["tool_parameters"] = tp
+                try:
+                    async with temp_engine.connect() as conn:
+                        result = await conn.execute(text(sql))
+                        rows = result.fetchall()
+                        columns = list(result.keys())
 
-                    # 构建当前步骤的结果条目
-                    step_result_entry = {
-                        "step": current_step,
-                        "sql": sql,
-                        "result": sql_result,
-                        "columns": columns,
-                        "row_count": len(sql_result),
-                    }
+                        sql_result = [_serialize_row(row, columns) for row in rows]
+                        logger.info(
+                            f"[SqlExecute] Got {len(sql_result)} rows, {len(columns)} columns"
+                        )
 
-                    # 追加到 sql_result_list_memory — 对齐 Java
-                    result_list = list(state.get("sql_result_list_memory") or [])
-                    result_list.append(step_result_entry)
+                        # 回写 SQL 到当前步骤的 tool_parameters
+                        plan = state.get("query_plan")
+                        if isinstance(plan, str):
+                            plan = json.loads(plan)
+                        if plan:
+                            steps = plan.get("execution_plan") or plan.get("steps", [])
+                            idx = current_step - 1
+                            if 0 <= idx < len(steps):
+                                tp = steps[idx].get("tool_parameters") or {}
+                                tp["sql_query"] = sql
+                                steps[idx]["tool_parameters"] = tp
 
-                    # 构建分步结果 — 对齐 Java
-                    step_results = dict(state.get("sql_step_results") or {})
-                    step_results[f"step_{current_step}"] = {
-                        "sql": sql,
-                        "data": sql_result,
-                        "columns": columns,
-                    }
+                        # 构建当前步骤的结果条目
+                        step_result_entry = {
+                            "step": current_step,
+                            "sql": sql,
+                            "result": sql_result,
+                            "columns": columns,
+                            "row_count": len(sql_result),
+                        }
 
-                    result = {
-                        "sql_result": sql_result,
-                        "sql_result_list_memory": result_list,
-                        "sql_step_results": step_results,
-                        "sql_error": None,
-                        "plan_current_step": current_step + 1,  # 当前步骤完成，递增
-                    }
-                    # 仅在 plan 被修改后才回写，避免覆盖为 None
-                    if plan:
-                        result["query_plan"] = json.dumps(plan, ensure_ascii=False)
-                    return result
+                        # 追加到 sql_result_list_memory — 对齐 Java
+                        result_list = list(state.get("sql_result_list_memory") or [])
+                        result_list.append(step_result_entry)
 
-            finally:
-                await temp_engine.dispose()
+                        # 构建分步结果 — 对齐 Java
+                        step_results = dict(state.get("sql_step_results") or {})
+                        step_results[f"step_{current_step}"] = {
+                            "sql": sql,
+                            "data": sql_result,
+                            "columns": columns,
+                        }
 
-    except Exception as e:
-        logger.error(f"[SqlExecute] Error: {e}")
-        return {
-            "sql_error": str(e),
-            "sql_regenerate_reason": {"type": "execute", "reason": str(e)},
-        }
+                        result = {
+                            "sql_result": sql_result,
+                            "sql_result_list_memory": result_list,
+                            "sql_step_results": step_results,
+                            "sql_error": None,
+                            "plan_current_step": current_step + 1,
+                        }
+                        if plan:
+                            result["query_plan"] = json.dumps(plan, ensure_ascii=False)
+                        return result
+
+                finally:
+                    await temp_engine.dispose()
+
+        except Exception as e:
+            logger.error(f"[SqlExecute] Error: {e}")
+            return {
+                "sql_error": str(e),
+                "sql_regenerate_reason": {"type": "execute", "reason": str(e)},
+            }
+
+    def format_sse(self, output: Dict[str, Any]) -> SSEPayload | None:
+        error = output.get("sql_error")
+        result_data = output.get("sql_result")
+        if error:
+            return SSEPayload(
+                text=f"SQL 执行错误: {error}",
+                text_type="TEXT",
+                metrics_delta={"sql_executed": True, "sql_success": False},
+            )
+        if result_data is not None:
+            return SSEPayload(
+                text=json.dumps(result_data, ensure_ascii=False),
+                text_type="RESULT_SET",
+                metrics_delta={"sql_executed": True, "sql_success": True},
+            )
+        return None
+
+
+# LangGraph 兼容实例
+sql_execute_node = SqlExecuteNode()
