@@ -11,6 +11,7 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 
 from ..core.database import get_db
+from ..schemas.common import ApiResponse
 from ..services.chat_service import ChatService
 from ..services.agent_service import AgentService
 from ..services.session_event_publisher import SessionEventPublisher
@@ -72,7 +73,7 @@ async def list_sessions(agent_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Agent 不存在")
     sessions = await ChatService.list_sessions(db, agent_id)
     logger.info(f"Agent {agent.name} has {len(sessions)} sessions")
-    return [_session_to_response(s) for s in sessions]
+    return ApiResponse.ok(data=[_session_to_response(s) for s in sessions])
 
 
 @router.post("/agent/{agent_id}/sessions", status_code=201, summary="创建会话")
@@ -88,7 +89,7 @@ async def create_session(
     title = body.title if body else "新对话"
     user_id = body.user_id if body else None
     session = await ChatService.create_session(db, agent_id, title=title, user_id=user_id)
-    return _session_to_response(session)
+    return ApiResponse.ok(data=_session_to_response(session))
 
 
 @router.delete("/agent/{agent_id}/sessions", summary="清空会话")
@@ -98,7 +99,7 @@ async def clear_sessions(agent_id: int, db: AsyncSession = Depends(get_db)):
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")
     count = await ChatService.clear_sessions(db, agent_id)
-    return {"success": True, "message": f"已清空 {count} 个会话", "data": None}
+    return ApiResponse.ok(message=f"已清空 {count} 个会话")
 
 
 @router.get("/agent/{agent_id}/sessions/stream", summary="SSE 会话事件流")
@@ -146,7 +147,7 @@ async def list_messages(session_id: str, db: AsyncSession = Depends(get_db)):
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在")
     messages = await ChatService.list_messages(db, session_id)
-    return [_message_to_response(m) for m in messages]
+    return ApiResponse.ok(data=[_message_to_response(m) for m in messages])
 
 
 @router.post("/sessions/{session_id}/messages", status_code=201, summary="保存消息")
@@ -175,7 +176,7 @@ async def save_message(
                 session_id, session.agent_id, request.content, ChatService, async_session_factory
             )
         )
-    return _message_to_response(message)
+    return ApiResponse.ok(data=_message_to_response(message))
 
 
 # ==================================================================
@@ -195,7 +196,7 @@ async def pin_session(
     is_pinned_int = 1 if isPinned else 0
     await ChatService.pin_session(db, session_id, is_pinned_int)
     msg = "会话已置顶" if isPinned else "会话已取消置顶"
-    return {"success": True, "message": msg, "data": None}
+    return ApiResponse.ok(message=msg)
 
 
 @router.put("/sessions/{session_id}/rename", summary="重命名会话")
@@ -211,7 +212,7 @@ async def rename_session(
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在")
     await ChatService.rename_session(db, session_id, title)
-    return {"success": True, "message": "会话已重命名", "data": None}
+    return ApiResponse.ok(message="会话已重命名")
 
 
 @router.delete("/sessions/{session_id}", summary="删除会话")
@@ -220,7 +221,7 @@ async def delete_session(session_id: str, db: AsyncSession = Depends(get_db)):
     success = await ChatService.delete_session(db, session_id)
     if not success:
         raise HTTPException(status_code=404, detail="会话不存在")
-    return {"success": True, "message": "会话已删除", "data": None}
+    return ApiResponse.ok(message="会话已删除")
 
 
 @router.post("/sessions/{session_id}/reports/html", summary="生成HTML报告")

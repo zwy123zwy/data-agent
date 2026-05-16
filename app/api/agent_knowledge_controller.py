@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, 
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 from ..core.database import get_db
+from ..schemas.common import ApiResponse
 from ..services.knowledge_service import KnowledgeService
 from ..services.agent_service import AgentService
 from ..services.file_storage_service import FileStorageService
@@ -28,11 +29,11 @@ async def get_knowledge(id: int, db: AsyncSession = Depends(get_db)):
     try:
         knowledge = await KnowledgeService.get_knowledge(db, id)
         if not knowledge:
-            return {"success": False, "message": "知识不存在"}
-        return {"success": True, "message": "查询成功", "data": KnowledgeResponse.model_validate(knowledge).model_dump(by_alias=True)}
+            return ApiResponse.fail(message="知识不存在")
+        return ApiResponse.ok(data=KnowledgeResponse.model_validate(knowledge).model_dump(by_alias=True), message="查询成功")
     except Exception as e:
         logger.error("查询知识详情失败：%s", e)
-        return {"success": False, "message": f"查询知识详情失败：{e}"}
+        return ApiResponse.fail(message=f"查询知识详情失败：{e}")
 
 
 @router.post("/create", summary="创建知识（支持文件上传）")
@@ -49,7 +50,7 @@ async def create_knowledge(
     try:
         agent = await AgentService.get_agent(db, int(agentId))
         if not agent:
-            return {"success": False, "message": "Agent 不存在"}
+            return ApiResponse.fail(message="Agent 不存在")
 
         source_filename = None
         file_path = None
@@ -95,10 +96,10 @@ async def create_knowledge(
         )
 
         knowledge = await KnowledgeService.create_knowledge(db, int(agentId), knowledge_data)
-        return {"success": True, "message": "创建知识成功，后台向量存储开始更新，请耐心等待...", "data": KnowledgeResponse.model_validate(knowledge).model_dump(by_alias=True)}
+        return ApiResponse.ok(data=KnowledgeResponse.model_validate(knowledge).model_dump(by_alias=True), message="创建知识成功，后台向量存储开始更新，请耐心等待...")
     except Exception as e:
         logger.error("创建知识失败: %s", e)
-        return {"success": False, "message": f"创建知识失败：{e}"}
+        return ApiResponse.fail(message=f"创建知识失败：{e}")
 
 
 @router.put("/{id}", summary="更新知识")
@@ -110,12 +111,12 @@ async def update_knowledge(
 
     existing = await KnowledgeService.get_knowledge(db, id)
     if not existing:
-        return {"success": False, "message": "知识不存在"}
+        return ApiResponse.fail(message="知识不存在")
 
     knowledge = await KnowledgeService.update_knowledge(db, id, dto)
     if not knowledge:
-        return {"success": False, "message": "更新失败"}
-    return {"success": True, "message": "更新成功", "data": KnowledgeResponse.model_validate(knowledge).model_dump(by_alias=True)}
+        return ApiResponse.fail(message="更新失败")
+    return ApiResponse.ok(data=KnowledgeResponse.model_validate(knowledge).model_dump(by_alias=True), message="更新成功")
 
 
 @router.put("/recall/{id}", summary="切换召回状态")
@@ -127,8 +128,8 @@ async def update_recall_status(
     """切换召回状态 — 对齐 Java PUT /api/agent-knowledge/recall/{id} (isRecall=Boolean)"""
     knowledge = await KnowledgeService.update_recall_status(db, id, 1 if isRecall else 0)
     if not knowledge:
-        return {"success": False, "message": "知识不存在"}
-    return {"success": True, "message": "更新成功", "data": KnowledgeResponse.model_validate(knowledge).model_dump(by_alias=True)}
+        return ApiResponse.fail(message="知识不存在")
+    return ApiResponse.ok(data=KnowledgeResponse.model_validate(knowledge).model_dump(by_alias=True), message="更新成功")
 
 
 @router.delete("/{id}", summary="删除知识")
@@ -136,8 +137,8 @@ async def delete_knowledge(id: int, db: AsyncSession = Depends(get_db)):
     
     ok = await KnowledgeService.delete_knowledge(db, id)
     if ok:
-        return {"success": True, "message": "删除操作已接收，等待后台删除相关资源..."}
-    return {"success": False, "message": "删除失败"}
+        return ApiResponse.ok(message="删除操作已接收，等待后台删除相关资源...")
+    return ApiResponse.fail(message="删除失败")
 
 
 @router.post("/query/page", summary="分页查询知识")
@@ -163,8 +164,8 @@ async def retry_embedding(id: int, db: AsyncSession = Depends(get_db)):
 
     knowledge = await KnowledgeService.retry_embedding(db, id)
     if not knowledge:
-        return {"success": False, "message": "知识不存在"}
-    return {"success": True, "message": "重试向量化操作成功，如果是文件解析需要花费点时间，请耐心等待...", "data": KnowledgeResponse.model_validate(knowledge).model_dump(by_alias=True)}
+        return ApiResponse.fail(message="知识不存在")
+    return ApiResponse.ok(data=KnowledgeResponse.model_validate(knowledge).model_dump(by_alias=True), message="重试向量化操作成功，如果是文件解析需要花费点时间，请耐心等待...")
 
 
 @router.post("/search", summary="向量检索知识")
@@ -172,7 +173,7 @@ async def search_knowledge(dto: KnowledgeSearchRequest, agentId: int = Query(...
 
     try:
         results = await KnowledgeService.search_knowledge(db, agentId, dto)
-        return {"success": True, "data": [r.model_dump() for r in results]}
+        return ApiResponse.ok(data=[r.model_dump() for r in results])
     except Exception as e:
         logger.error("向量检索失败：%s", e)
-        return {"success": False, "message": f"检索失败：{e}", "data": []}
+        return ApiResponse.fail(message=f"检索失败：{e}", data=[])

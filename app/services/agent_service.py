@@ -150,5 +150,5 @@ class AgentService(BaseService[Agent]):
 
     @staticmethod
     async def toggle_api_key(db: AsyncSession, agent_id: int, enabled: bool) -> Optional[Agent]:
-        """启用/禁用 API Key — 对齐 Java toggleApiKey"""
+        """启用/禁用 API Key """
         return await AgentService.update(db, agent_id, {"api_key_enabled": 1 if enabled else 0})

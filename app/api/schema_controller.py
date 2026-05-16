@@ -5,6 +5,7 @@ Schema API
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.database import get_db
+from ..schemas.common import ApiResponse
 from ..services.datasource_service import DatasourceService
 from ..services.schema_service import SchemaService
 from typing import Dict, Any, Optional, List
@@ -41,7 +42,7 @@ async def get_datasource_schema(
     # 获取 Schema
     try:
         schema = await SchemaService.get_database_schema(datasource, tables)
-        return schema
+        return ApiResponse.ok(data=schema)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取 Schema 失败: {str(e)}")
 
@@ -75,7 +76,7 @@ async def get_datasource_ddl(
     # 获取 DDL
     try:
         ddl = await SchemaService.get_database_ddl(datasource, tables)
-        return {"ddl": ddl}
+        return ApiResponse.ok(data={"ddl": ddl})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取 DDL 失败: {str(e)}")
 
@@ -106,7 +107,7 @@ async def get_datasource_tables(
             {"name": table["name"], "comment": table.get("comment", "")}
             for table in schema["tables"]
         ]
-        return {"tables": tables}
+        return ApiResponse.ok(data={"tables": tables})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取表列表失败: {str(e)}")
 
@@ -170,6 +171,6 @@ async def get_table_ddl(
     # 获取表 DDL
     try:
         ddl = await SchemaService.get_table_ddl(datasource, table_name)
-        return {"ddl": ddl}
+        return ApiResponse.ok(data={"ddl": ddl})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取表 DDL 失败: {str(e)}")

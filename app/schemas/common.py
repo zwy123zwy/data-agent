@@ -1,19 +1,21 @@
+
 from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 
-class SuccessResponse(BaseModel):
-    """统一成功响应"""
+class ApiResponse(BaseModel):
+    """统一 API 响应 """
 
-    success: bool = Field(True, description="是否成功")
-    message: str = Field("success", description="成功消息")
-    data: Optional[Any] = Field(None, description="响应数据")
+    success: bool = Field(..., description="请求是否成功")
+    message: str = Field(default="success", description="响应消息")
+    data: Any = Field(default=None, description="响应数据")
 
+    @staticmethod
+    def ok(data: Any = None, *, message: str = "success") -> "ApiResponse":
+        """成功响应 """
+        return ApiResponse(success=True, message=message, data=data)
 
-class ErrorResponse(BaseModel):
-    """统一错误响应"""
-
-    success: bool = Field(False, description="是否成功")
-    message: str = Field(..., description="错误消息")
-    detail: Optional[Any] = Field(None, description="错误详情")
-
+    @staticmethod
+    def fail(message: str, data: Any = None) -> "ApiResponse":
+        """失败响应"""
+        return ApiResponse(success=False, message=message, data=data)

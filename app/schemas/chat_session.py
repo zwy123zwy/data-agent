@@ -1,4 +1,4 @@
-"""ChatSession Pydantic Schema — 对齐 Java ChatSession"""
+"""ChatSession Pydantic Schema"""
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Optional
 from datetime import datetime
@@ -9,7 +9,7 @@ from datetime import datetime
 # ═══════════════════════════════════════════════════════════════
 
 class ChatSessionCreateRequest(BaseModel):
-    """创建会话请求 — 对齐 Java ChatController.createSession"""
+    """创建会话请求"""
     title: str = Field("新对话", description="会话标题")
     user_id: Optional[int] = Field(None, alias="userId", description="用户ID")
 
@@ -21,7 +21,7 @@ class ChatSessionCreateRequest(BaseModel):
 # ═══════════════════════════════════════════════════════════════
 
 class ChatSessionResponse(BaseModel):
-    """会话响应 — camelCase 对齐 Java ChatSession"""
+    """会话响应 """
     id: str
     agent_id: int = Field(..., alias="agentId")
     title: str

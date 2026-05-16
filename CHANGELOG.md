@@ -4,6 +4,8 @@
 
 - **项目清理**: 删除 `restart_server.bat`（端口已过时）、`checkpoints.db-wal/shm`（SQLite 运行时文件）。清理 9 个 `__pycache__` 目录（121 个 .pyc 文件）。识别 2 个死服务（`hybrid_search.py`、`multi_turn.py` 未接入）。
 - **项目全面检查**: 16 节点注册对齐、Model/Schema 匹配、gitignore 覆盖验证。测试：174 passed。
+- **统一 API 响应格式 — ApiResponse 类（对齐 Java）**: 创建 `app/schemas/common.py` 的 `ApiResponse` 类（对齐 Java `ApiResponse<T>`），提供 `ok(data, message)` / `fail(message, data)` 工厂方法。批量更新 11 个 controller（semantic_model、business_knowledge、model_config、chat、agent、agent_knowledge、datasource、agent_datasource、agent_preset_question、feedback、schema_controller），移除所有手动构造 `{"success": True, ...}` dict 的代码，去除 datasource_controller 的 `response_model` 声明。修复 ChatSessionSidebar 创建/删除按钮无响应的问题（后端裸返数据导致前端 `res.data.data` 为 undefined）。
+- **Controller 重构**: 8 个 controller 文件中手动构造的 `{"success": True/False, ...}` dict 全部替换为 `ApiResponse.ok()` / `ApiResponse.fail()` 调用，统一响应构建方式。保留含额外根级别字段（`total`, `pageNum`, `hasCustomConfig` 等）的返回不变。
 
 ## 2026-05-15
 

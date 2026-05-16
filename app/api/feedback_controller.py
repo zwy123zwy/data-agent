@@ -5,6 +5,7 @@ from sqlalchemy import select
 from typing import List, Optional
 from ..core.database import get_db
 from ..core.workflow_controller import get_workflow_controller
+from ..schemas.common import ApiResponse
 from ..models.human_feedback import HumanFeedback
 from ..schemas.human_feedback import (
     HumanFeedbackSubmitRequest,
@@ -28,7 +29,7 @@ async def get_workflow_status(workflow_id: str):
     workflow = controller.get_workflow(workflow_id)
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
-    return {
+    return ApiResponse.ok(data={
         "workflow_id": workflow.workflow_id,
         "agent_id": workflow.agent_id,
         "status": workflow.status,
@@ -37,7 +38,7 @@ async def get_workflow_status(workflow_id: str):
         "feedback_data": workflow.feedback_data,
         "created_at": workflow.created_at.isoformat(),
         "updated_at": workflow.updated_at.isoformat(),
-    }
+    })
 
 
 @router.get("/feedback/pending", summary="获取待审批任务")
@@ -53,7 +54,7 @@ async def get_pending_feedback(
 
     result = await db.execute(query.order_by(HumanFeedback.created_at.desc()))
     feedbacks = result.scalars().all()
-    return [_to_response(f) for f in feedbacks]
+    return ApiResponse.ok(data=[_to_response(f) for f in feedbacks])
 
 
 @router.post("/feedback/{workflow_id}", summary="提交反馈")
@@ -97,7 +98,7 @@ async def submit_feedback(
     if not resumed:
         raise HTTPException(status_code=400, detail="Workflow is not in paused state or not found")
 
-    return _to_response(feedback)
+    return ApiResponse.ok(data=_to_response(feedback))
 
 
 @router.get("/feedback/history", summary="获取反馈历史")
@@ -116,7 +117,7 @@ async def get_feedback_history(
 
     result = await db.execute(query.order_by(HumanFeedback.created_at.desc()))
     feedbacks = result.scalars().all()
-    return [_to_response(f) for f in feedbacks]
+    return ApiResponse.ok(data=[_to_response(f) for f in feedbacks])
 
 
 @router.get("/feedback/{feedback_id}", summary="获取反馈详情")
@@ -130,4 +131,4 @@ async def get_feedback(
     feedback = result.scalar_one_or_none()
     if not feedback:
         raise HTTPException(status_code=404, detail="Feedback not found")
-    return _to_response(feedback)
+    return ApiResponse.ok(data=_to_response(feedback))

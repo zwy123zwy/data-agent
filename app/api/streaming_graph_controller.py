@@ -1,12 +1,9 @@
 """
-流式查询 API — 对齐 Java GraphController + GraphServiceImpl
+流式查询 API
 
 【在系统中的地位】
   这是整个后端最重要的 API 文件。前端的所有数据分析请求都通过这里的
   SSE (Server-Sent Events) 端点进入，驱动 LangGraph 工作流执行。
-
-【Java 对应】
-  streaming_graph_controller.py ≈ GraphController.java + GraphServiceImpl.java (合一)
 
 【SSE 格式 — 对齐 Java ServerSentEvent<GraphNodeResponse>】
   Java 后端使用 Spring Flux<ServerSentEvent<GraphNodeResponse>> 发送 SSE:
@@ -88,7 +85,7 @@ def _build_graph_response(
     error: bool = False,
     complete: bool = False,
 ) -> dict:
-    """构建 GraphNodeResponse — 对齐 Java GraphNodeResponse.java"""
+    """构建 GraphNodeResponse 响应"""
     return {
         "agentId": str(agent_id),
         "threadId": thread_id or "",
@@ -146,7 +143,7 @@ async def stream_workflow_execution(
     rejected_plan: bool = False,
     nl2sql_only: bool = False,
 ):
-    """流式执行工作流 — 对齐 Java GraphServiceImpl.graphStreamProcess()
+    """流式执行工作流
 
     SSE 格式对齐 Java:
       - 每个节点输出 → 一条 data: GraphNodeResponse JSON (无 event: 前缀)

@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.database import get_db
+from ..schemas.common import ApiResponse
 from ..services.agent_preset_question_service import AgentPresetQuestionService
 from ..services.agent_service import AgentService
 from ..schemas.agent_preset_question import (
@@ -25,7 +26,7 @@ async def get_preset_questions(agent_id: int, db: AsyncSession = Depends(get_db)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")
     questions = await AgentPresetQuestionService.find_all_by_agent_id(db, agent_id)
-    return [PresetQuestionResponse.model_validate(q).model_dump(by_alias=True) for q in questions]
+    return ApiResponse.ok(data=[PresetQuestionResponse.model_validate(q).model_dump(by_alias=True) for q in questions])
 
 
 @router.post(
@@ -44,7 +45,7 @@ async def save_preset_questions(
     try:
         questions_data = [q.model_dump() for q in body.questions]
         await AgentPresetQuestionService.batch_save(db, agent_id, questions_data)
-        return {"success": True, "message": "预设问题保存成功", "data": None}
+        return ApiResponse.ok(message="预设问题保存成功")
     except Exception as e:
         logger.error(f"Error saving preset questions for agent {agent_id}: {e}")
         raise HTTPException(status_code=500, detail=f"保存预设问题失败: {str(e)}")
@@ -67,7 +68,7 @@ async def delete_preset_question(
         success = await AgentPresetQuestionService.delete_by_id(db, question_id)
         if not success:
             raise HTTPException(status_code=404, detail="预设问题不存在")
-        return {"success": True, "message": "预设问题删除成功", "data": None}
+        return ApiResponse.ok(message="预设问题删除成功")
     except HTTPException:
         raise
     except Exception as e:

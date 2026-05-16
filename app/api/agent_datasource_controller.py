@@ -4,6 +4,7 @@ AgentDatasource API — 对齐 Java AgentDatasourceController
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.database import get_db
+from ..schemas.common import ApiResponse
 from ..schemas.agent_datasource import (
     AgentDatasourceCreate,
     AgentDatasourceResponse,
@@ -30,11 +31,7 @@ async def list_agent_datasources(
     """
     try:
         items = await AgentDatasourceService.list_agent_datasources(db, agent_id)
-        return {
-            "success": True,
-            "message": "操作成功",
-            "data": [item.model_dump(by_alias=True) for item in items],
-        }
+        return ApiResponse.ok(data=[item.model_dump(by_alias=True) for item in items])
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -51,11 +48,7 @@ async def get_active_datasource(
     active = next((item for item in items if item.is_active == 1), None)  # type: ignore
     if not active:
         raise HTTPException(status_code=404, detail="No active datasource found for this Agent")
-    return {
-        "success": True,
-        "message": "操作成功",
-        "data": active.model_dump(by_alias=True),
-    }
+    return ApiResponse.ok(data=active.model_dump(by_alias=True))
 
 
 @router.put("/{agent_id}/datasources/toggle", summary="切换数据源启用/禁用")
@@ -79,7 +72,7 @@ async def toggle_datasource(
             select_tables=[],
         )
         msg = "数据源已启用" if dto.is_active else "数据源已禁用"
-        return {"success": True, "message": msg, "data": resp.model_dump(by_alias=True)}
+        return ApiResponse.ok(data=resp.model_dump(by_alias=True), message=msg)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -98,7 +91,7 @@ async def update_datasource_tables(
         await AgentDatasourceService.update_datasource_tables(
             db, agent_id, dto.datasource_id, table_names
         )
-        return {"success": True, "message": "更新成功", "data": None}
+        return ApiResponse.ok(message="更新成功")
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -112,7 +105,7 @@ async def init_schema(
     try:
         result = await AgentDatasourceService.init_schema(db, agent_id)
         if result:
-            return {"success": True, "message": "Schema初始化成功", "data": None}
+            return ApiResponse.ok(message="Schema初始化成功")
         else:
             raise HTTPException(status_code=500, detail="Schema初始化失败")
     except ValueError as e:
@@ -144,7 +137,7 @@ async def bind_datasource(
             update_time=getattr(agent_ds, "update_time", None),
             select_tables=[],
         ).model_dump(by_alias=True)
-        return {"success": True, "message": "数据源添加成功", "data": resp}
+        return ApiResponse.ok(data=resp, message="数据源添加成功")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -159,4 +152,4 @@ async def unbind_datasource(
     success = await AgentDatasourceService.unbind_datasource(db, agent_id, datasource_id)
     if not success:
         raise HTTPException(status_code=404, detail="Agent-Datasource binding not found")
-    return {"success": True, "message": "数据源已移除"}
+    return ApiResponse.ok(message="数据源已移除")
