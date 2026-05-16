@@ -173,6 +173,7 @@ Claude Code 在本仓库中编写或修改代码时，必须先理解现有架�
 - API 返回结构优先使用已有响应模型和中间件，不新增不兼容字段，除非同步更新文档。
 - SSE 协议变更必须兼容现有 Java 前端期望的 `agentId`、`threadId`、`nodeName`、`textType`、`text`、`error`、`complete` 字段。
 - Controller 只负责参数解析、权限/校验、调用编排和协议输出；业务判断放到 Service 或 Workflow。
+- **禁止在 Controller 中硬编码 UI 文案、Prompt 模板、SSE 进度消息**。所有面向用户的文本和提示词必须收敛到 `_NODE_MSG` 映射、Prompt 配置文件（DB `prompt_config` 表）或独立的 constants 模块中。Controller 只通过 key 引用文案，不做内联拼接中文/英文字符串。
 
 ### Testing And Verification Rules
 

@@ -75,6 +75,35 @@ TEXT_TYPE_RESULT_SET = "RESULT_SET"
 TEXT_TYPE_PYTHON = "PYTHON"
 TEXT_TYPE_TEXT = "TEXT"
 
+# ============================================================================
+# 节点进度文案 — Controller 不硬编码 UI 文本，统一收敛到此映射
+# 每个 key 对应一个节点进度/状态的用户可见消息模板
+# ============================================================================
+_NODE_MSG = {
+    "agent_not_found": "Agent 不存在",
+    "no_active_datasource": "没有激活的数据源",
+    "schema_recall": lambda tc: f"正在加载数据库表结构...找到 {tc} 张表" if tc else "正在加载数据库表结构...",
+    "table_relation": lambda tc, rc: f"正在分析表关系...{tc} 张表, {rc} 条关系" if tc else "正在分析表关系...",
+    "feasibility_ok": "正在评估查询可行性...可行",
+    "feasibility_fail": lambda reason: f"正在评估查询可行性...不可行: {reason}",
+    "feasibility_default": "正在评估查询可行性...",
+    "planner": lambda sc: f"正在制定执行计划...共 {sc} 个步骤" if sc else "正在制定执行计划...",
+    "plan_executor_step": lambda step: f"正在执行步骤 {step}...",
+    "plan_executor_default": "正在执行计划...",
+    "sql_execute_error": lambda err: f"SQL 执行错误: {err}",
+    "python_execute_ok": "Python 代码执行成功",
+    "python_execute_fail": lambda err: f"Python 代码执行失败: {err[:200]}" if err else "Python 代码执行中...",
+    "intent_recognition": lambda json_part: f"正在进行意图识别...{json_part}\n意图识别完成！",
+    "knowledge_recall_hits": lambda count: f"正在检索相关知识...已找到 {count} 条相关证据文档",
+    "knowledge_recall_preview": lambda recalled: f"正在检索相关知识...\n{recalled[:500]}",
+    "knowledge_recall_empty": "正在检索相关知识...未找到证据文档",
+    "query_rewrite_ok": lambda rewritten: f"正在优化查询...\n{rewritten}",
+    "query_rewrite_fallback": "正在优化查询...(使用原始查询)",
+    "semantic_check_pass": "正在校验 SQL 语义...✓ 通过",
+    "semantic_check_fail": "正在校验 SQL 语义...⚠ 未通过",
+    "evidence_preview": lambda idx, text: f"证据{idx}: {text}...",
+}
+
 
 def _build_graph_response(
     agent_id: int,
@@ -117,7 +146,7 @@ def _build_initial_state(
     multi_turn_context: str = "",
     semantic_model_prompt: str = "",
 ) -> WorkflowState:
-    """构建初始 WorkflowState — 对齐 Java GraphRequest 字段映射"""
+    """构建初始 WorkflowState """
     return {
         "agent_id": agent_id,
         "user_query": user_query,
@@ -160,7 +189,7 @@ async def stream_workflow_execution(
         agent = await AgentService.get_agent(db, agent_id)
         if not agent:
             yield _format_sse_event("error", _build_graph_response(
-                agent_id, thread_id, "", "Agent 不存在", TEXT_TYPE_TEXT, error=True
+                agent_id, thread_id, "", _NODE_MSG["agent_not_found"], TEXT_TYPE_TEXT, error=True
             ))
             await MetricsAggregationService.record_execution(
                 db, thread_id=thread_id, agent_id=agent_id, status="error",
@@ -173,7 +202,7 @@ async def stream_workflow_execution(
         active_agent_ds = next((item for item in agent_ds_list if item.is_active == 1), None)
         if not active_agent_ds:
             yield _format_sse_event("error", _build_graph_response(
-                agent_id, thread_id, "", "没有激活的数据源", TEXT_TYPE_TEXT, error=True
+                agent_id, thread_id, "", _NODE_MSG["no_active_datasource"], TEXT_TYPE_TEXT, error=True
             ))
             await MetricsAggregationService.record_execution(
                 db, thread_id=thread_id, agent_id=agent_id, status="error",
@@ -356,10 +385,7 @@ async def stream_workflow_execution(
                     metrics_state["intent_classification"] = intent  # Phase 7: 记录意图分类
                     # 对齐 Java: "正在进行意图识别..." + JSON + "\n意图识别完成！"
                     json_part = json.dumps({"classification": classification}, ensure_ascii=False)
-                    if intent == "data_analysis":
-                        text = f"正在进行意图识别...{json_part}\n意图识别完成！"
-                    else:
-                        text = f"正在进行意图识别...{json_part}\n意图识别完成！"
+                    text = _NODE_MSG["intent_recognition"](json_part)
                     yield _format_sse_data(_build_graph_response(
                         agent_id, thread_id, java_name, text, TEXT_TYPE_TEXT
                     ))
@@ -380,16 +406,16 @@ async def stream_workflow_execution(
                     count = len(knowledge_items)
                     # 对齐 Java: "已找到 N 条相关证据文档"
                     if count:
-                        lines = [f"正在检索相关知识...已找到 {count} 条相关证据文档"]
+                        lines = [_NODE_MSG["knowledge_recall_hits"](count)]
                         # 输出证据预览 (前3条，各限100字)
                         for idx, item in enumerate(knowledge_items[:3]):
                             content_preview = (item.get("content") or "")[:100]
-                            lines.append(f"证据{idx + 1}: {content_preview}...")
+                            lines.append(_NODE_MSG["evidence_preview"](idx + 1, content_preview))
                         text = "\n".join(lines)
                     elif recalled and recalled != "无":
-                        text = f"正在检索相关知识...\n{recalled[:500]}"
+                        text = _NODE_MSG["knowledge_recall_preview"](recalled)
                     else:
-                        text = "正在检索相关知识...未找到证据文档"
+                        text = _NODE_MSG["knowledge_recall_empty"]
                     yield _format_sse_data(_build_graph_response(
                         agent_id, thread_id, java_name, text, TEXT_TYPE_TEXT
                     ))
@@ -399,7 +425,7 @@ async def stream_workflow_execution(
                 # ===== 查询改写 =====
                 elif node_name == "query_rewrite":
                     rewritten = node_output.get("rewritten_query", "")
-                    text = f"正在优化查询...\n{rewritten}" if rewritten else f"正在优化查询...(使用原始查询)"
+                    text = _NODE_MSG["query_rewrite_ok"](rewritten) if rewritten else _NODE_MSG["query_rewrite_fallback"]
                     yield _format_sse_data(_build_graph_response(
                         agent_id, thread_id, java_name, text, TEXT_TYPE_TEXT
                     ))
@@ -411,7 +437,7 @@ async def stream_workflow_execution(
                     schema_info = node_output.get("schema_info", {})
                     tables = schema_info.get("tables", []) if isinstance(schema_info, dict) else []
                     table_count = len(tables)
-                    text = f"正在加载数据库表结构...找到 {table_count} 张表" if table_count else "正在加载数据库表结构..."
+                    text = _NODE_MSG["schema_recall"](table_count)
                     yield _format_sse_data(_build_graph_response(
                         agent_id, thread_id, java_name, text, TEXT_TYPE_TEXT
                     ))
@@ -425,9 +451,9 @@ async def stream_workflow_execution(
                         relations = schema_info.get("relations", [])
                         table_count = len(schema_info.get("tables", []))
                         rel_count = len(relations)
-                        text = f"正在分析表关系...{table_count} 张表, {rel_count} 条关系" if table_count else "正在分析表关系..."
+                        text = _NODE_MSG["table_relation"](table_count, rel_count)
                     else:
-                        text = "正在分析表关系..."
+                        text = _NODE_MSG["table_relation"](0, 0)
                     yield _format_sse_data(_build_graph_response(
                         agent_id, thread_id, java_name, text, TEXT_TYPE_TEXT
                     ))
@@ -440,9 +466,9 @@ async def stream_workflow_execution(
                     if isinstance(result, dict):
                         feasible = result.get("feasible", True)
                         reason = result.get("reason", "")
-                        text = f"正在评估查询可行性...{'可行' if feasible else '不可行: ' + reason}"
+                        text = _NODE_MSG["feasibility_ok"] if feasible else _NODE_MSG["feasibility_fail"](reason)
                     else:
-                        text = "正在评估查询可行性..."
+                        text = _NODE_MSG["feasibility_default"]
                     yield _format_sse_data(_build_graph_response(
                         agent_id, thread_id, java_name, text, TEXT_TYPE_TEXT
                     ))
@@ -456,12 +482,12 @@ async def stream_workflow_execution(
                         plan = json.loads(plan_raw) if isinstance(plan_raw, str) else plan_raw
                         steps = plan.get("execution_plan", []) if isinstance(plan, dict) else []
                         step_count = len(steps)
-                        text = f"正在制定执行计划...共 {step_count} 个步骤"
+                        text = _NODE_MSG["planner"](step_count)
                         # Phase 7: Plan首次校验通过 (Planner成功产出合法Plan)
                         if steps:
                             metrics_state["plan_first_pass"] = True
                     except (json.JSONDecodeError, TypeError):
-                        text = "正在制定执行计划..."
+                        text = _NODE_MSG["planner"](0)
                     yield _format_sse_data(_build_graph_response(
                         agent_id, thread_id, java_name, text, TEXT_TYPE_TEXT
                     ))
@@ -477,9 +503,9 @@ async def stream_workflow_execution(
                         int(metrics_state.get("plan_repair_count", 0)), int(repair_count)
                     )  # Phase 7
                     if next_node:
-                        text = f"正在执行步骤 {current_step}..."
+                        text = _NODE_MSG["plan_executor_step"](current_step)
                     else:
-                        text = "正在执行计划..."
+                        text = _NODE_MSG["plan_executor_default"]
                     yield _format_sse_data(_build_graph_response(
                         agent_id, thread_id, java_name, text, TEXT_TYPE_TEXT
                     ))
@@ -506,7 +532,7 @@ async def stream_workflow_execution(
                     metrics_state["sql_success"] = not error  # Phase 7
                     if error:
                         yield _format_sse_data(_build_graph_response(
-                            agent_id, thread_id, java_name, f"SQL 执行错误: {error}", TEXT_TYPE_TEXT
+                            agent_id, thread_id, java_name, _NODE_MSG["sql_execute_error"](error), TEXT_TYPE_TEXT
                         ))
                         m.error_type = "SqlExecuteError"
                         m.error_message = error[:200]
@@ -524,7 +550,7 @@ async def stream_workflow_execution(
                     score = node_output.get("semantic_consistency_score", 0)
                     if passed:
                         metrics_state["sql_semantic_pass"] = True  # Phase 7
-                    text = f"正在校验 SQL 语义...{'✓ 通过' if passed else '⚠ 未通过'}"
+                    text = _NODE_MSG["semantic_check_pass"] if passed else _NODE_MSG["semantic_check_fail"]
                     yield _format_sse_data(_build_graph_response(
                         agent_id, thread_id, java_name, text, TEXT_TYPE_TEXT
                     ))
@@ -549,11 +575,11 @@ async def stream_workflow_execution(
                     metrics_state["python_success"] = is_success  # Phase 7
                     if is_success:
                         yield _format_sse_data(_build_graph_response(
-                            agent_id, thread_id, java_name, "Python 代码执行成功", TEXT_TYPE_TEXT
+                            agent_id, thread_id, java_name, _NODE_MSG["python_execute_ok"], TEXT_TYPE_TEXT
                         ))
                     else:
                         yield _format_sse_data(_build_graph_response(
-                            agent_id, thread_id, java_name, f"Python 代码执行失败: {error[:200]}" if error else "Python 代码执行中...", TEXT_TYPE_TEXT
+                            agent_id, thread_id, java_name, _NODE_MSG["python_execute_fail"](error), TEXT_TYPE_TEXT
                         ))
                     m.finish("success" if is_success else "error")
                     m.log()
