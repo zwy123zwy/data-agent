@@ -1,12 +1,4 @@
-"""
-python-agent-v2 启动入口
-
-用法:
-    python main.py                  # 默认 8200 端口，热重载开启
-    python main.py --port 8080      # 指定端口
-    python main.py --no-reload      # 关闭热重载（生产模式）
-"""
-
+# 项目运行文件
 if __name__ == "__main__":
     import argparse
     import uvicorn
