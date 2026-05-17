@@ -30,6 +30,7 @@ from ..services.agent_datasource_service import AgentDatasourceService
 from ..services.semantic_model_service import SemanticModelService
 from ..services.node_metrics import NodeMetricsTracker
 from ..services.metrics_aggregation_service import MetricsAggregationService
+from ..services.multi_turn import get_multi_turn_manager
 import asyncio
 import json
 import logging
@@ -182,6 +183,7 @@ def _build_initial_state(
         "python_tries_count": 0,
         "plan_repair_count": 0,
         "plan_current_step": 1,
+        "intent_retry_count": 0,
     }
 
 
@@ -260,12 +262,18 @@ async def stream_workflow_execution(
                             f"{len(select_tables)} tables ({len(semantic_model_prompt)} chars)"
                         )
 
-            # 4. 构建初始状态（含空语义模型的降级状态）
+            # 4. 获取多轮对话上下文
+            multi_turn_context = get_multi_turn_manager().get_context_for_prompt(thread_id)
+            if multi_turn_context:
+                logger.info(f"[Stream] Multi-turn context loaded: {len(multi_turn_context)} chars")
+
+            # 5. 构建初始状态（含空语义模型的降级状态）
             graph_input = _build_initial_state(
                 agent_id=agent_id,
                 user_query=user_query,
                 nl2sql_only=nl2sql_only,
                 human_review=human_feedback,
+                multi_turn_context=multi_turn_context,
                 semantic_model_prompt=semantic_model_prompt,
             )
 
@@ -356,11 +364,20 @@ async def stream_workflow_execution(
                     raw = raw[0]
                 interrupt_value = getattr(raw, "value", raw)
 
-                logger.info(f"[Stream] Interrupt: {interrupt_value}")
+                # 根据 interrupt type 确定来源节点
+                interrupt_type = (
+                    interrupt_value.get("type", "") if isinstance(interrupt_value, dict) else ""
+                )
+                if interrupt_type == "intent_confirm":
+                    source_node = "intent_recognition"
+                    logger.info(f"[Stream] Intent confirm interrupt: {interrupt_value.get('message', '')}")
+                else:
+                    source_node = "human_feedback"
+                    logger.info(f"[Stream] Human feedback interrupt: {interrupt_value}")
 
-                # Send human_feedback node output as SSE data
+                # Send node output as SSE data
                 if isinstance(interrupt_value, dict):
-                    java_name = NODE_NAME_MAP.get("human_feedback", "HumanFeedbackNode")
+                    java_name = NODE_NAME_MAP.get(source_node, source_node)
                     text = json.dumps(interrupt_value, ensure_ascii=False)
                     yield _format_logged_sse_data(_build_graph_response(
                         agent_id, thread_id, java_name, text, TEXT_TYPE_JSON
@@ -368,7 +385,7 @@ async def stream_workflow_execution(
 
                 # Send paused event so frontend knows this is a normal pause, not an error
                 yield _format_logged_sse_event("paused", _build_graph_response(
-                    agent_id, thread_id, NODE_NAME_MAP.get("human_feedback", ""), "", TEXT_TYPE_TEXT
+                    agent_id, thread_id, NODE_NAME_MAP.get(source_node, ""), "", TEXT_TYPE_TEXT
                 ))
                 tracker.log_summary()
                 await _record_metrics("paused")
@@ -417,6 +434,7 @@ async def stream_workflow_execution(
                         ))
                         tracker.log_summary()
                         await _record_metrics("success")
+                        get_multi_turn_manager().add_turn(thread_id, user_query, "[闲聊]")
                         return
 
                 # ===== 通用 SSE 输出 — Controller 不窥探节点内部字段 =====
@@ -452,6 +470,8 @@ async def stream_workflow_execution(
         yield _format_logged_sse_event("complete", _build_graph_response(
             agent_id, thread_id, "", "", TEXT_TYPE_TEXT, complete=True
         ))
+        # 本轮对话写入多轮上下文，下次请求可获取历史
+        get_multi_turn_manager().add_turn(thread_id, user_query, "[分析完成]")
 
     except asyncio.CancelledError:
         logger.info(f"[Stream] Client disconnected, threadId={thread_id}, releasing resources")

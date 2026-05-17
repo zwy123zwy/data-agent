@@ -49,6 +49,10 @@ class StateKeys:
     # ── 意图识别 ──
     INTENT = "intent"
     CLASSIFICATION = "classification"
+    INTENT_CONFIDENCE = "intent_confidence"        # float 0.0-1.0, LLM 自评置信度
+    INTENT_NEEDS_CONFIRM = "intent_needs_confirm"  # bool, 置信度不足时暂停等人工确认
+    INTENT_RETRY_COUNT = "intent_retry_count"      # int, 意图重判次数 (max 1)
+    INTENT_HUMAN_FEEDBACK = "intent_human_feedback"  # str, 用户对意图判断的纠正反馈
 
     # ── 知识召回 (RAG Evidence) ──
     RECALLED_KNOWLEDGE = "recalled_knowledge"
@@ -197,6 +201,10 @@ class WorkflowState(TypedDict, total=False):
     # =====================================================================
     intent: Optional[str]
     classification: Optional[str]  # 对齐 Java IntentRecognitionOutputDTO.classification
+    intent_confidence: Optional[float]
+    intent_needs_confirm: Optional[bool]
+    intent_retry_count: int
+    intent_human_feedback: Optional[str]
 
     # =====================================================================
     # 3. RAG — 知识召回 (Evidence Recall)
