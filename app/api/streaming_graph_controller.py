@@ -36,6 +36,12 @@ import logging
 import uuid
 
 logger = logging.getLogger(__name__)
+# 确保终端可见执行日志 — 为当前模块 logger 添加 StreamHandler
+if not logger.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s", "%H:%M:%S"))
+    logger.addHandler(_h)
+    logger.setLevel(logging.INFO)
 
 router = APIRouter(prefix="/api", tags=["流式查询"])
 
@@ -153,6 +159,7 @@ async def stream_workflow_execution(
       - 流程完成 → event: complete + GraphNodeResponse(complete=true)
       - 流程错误 → event: error + GraphNodeResponse(error=true)
     """
+    logger.info(f"[Stream] Start, agentId={agent_id}, query={user_query}, threadId={thread_id}")
     if not thread_id:
         thread_id = str(uuid.uuid4())
 
@@ -161,6 +168,8 @@ async def stream_workflow_execution(
     try:
         # 检查 Agent
         agent = await AgentService.get_agent(db, agent_id)
+        logger.info(f"[stream_workflow_execution] agent_id={agent_id}, agent={agent}")
+        
         if not agent:
             yield _format_sse_event("error", _build_graph_response(
                 agent_id, thread_id, "", "Agent 不存在", TEXT_TYPE_TEXT, error=True
@@ -477,6 +486,7 @@ async def stream_search_legacy(
     nl2sqlOnly: bool = Query(False, description="仅NL2SQL模式"),
     db: AsyncSession = Depends(get_db),
 ):
+    logger.info(f"[Stream] Start, agentId={agentId}, query={query}, threadId={threadId}")
     return StreamingResponse(
         stream_workflow_execution(
             agent_id=agentId,
