@@ -2,6 +2,7 @@
 
 ## 2026-05-17
 
+- **意图识别置信度 + 人工确认闭环**: `intent_recognition.py` 新增 confidence 字段（LLM 自评 0.0-1.0），置信度 < 0.7 时通过 `interrupt()` 暂停等人工确认，用户反馈喂回 LLM 重判（最多 1 次）。`streaming_graph_controller.py` 接入 `MultiTurnContextManager`（请求前读历史上下文，完成后记录本轮对话），interrupt 处理器支持 `intent_confirm` 类型检测。`state.py` 新增 4 个 state key。
 - **日志终端可见修复**: `streaming_graph_controller.py` 添加 StreamHandler 到模块 logger，确保 uvicorn worker 子进程中 `logger.info()` 输出到终端。
 
 ## 2026-05-16
