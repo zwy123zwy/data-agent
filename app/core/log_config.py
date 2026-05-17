@@ -52,8 +52,10 @@ def setup_logging() -> None:
     error_handler.setFormatter(logging.Formatter(DETAIL_FORMAT))
     root.addHandler(error_handler)
 
-    # 控制第三方库日志噪音
+    # 控制第三方库日志噪音 + 防重复
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    sa = logging.getLogger("sqlalchemy.engine")
+    sa.setLevel(logging.WARNING)
+    sa.propagate = False  # 禁止传播到 root，避免重复输出
 
     logging.getLogger(__name__).info("日志系统初始化完成")
