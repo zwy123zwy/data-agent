@@ -64,6 +64,27 @@ NODE_NAME_MAP = {
     "human_feedback": "HumanFeedbackNode",
 }
 
+# ★ 对用户可见的节点（其余为内部管线节点——RAG、Schema 回收等）
+# LangGraph 中所有节点都会产生 state update，但只有这些节点向前端推送 SSE 消息
+USER_VISIBLE_NODES = frozenset({
+    "intent_recognition",
+    "knowledge_recall",
+    "query_rewrite",
+    "schema_recall",
+    "table_relation",
+    "feasibility",
+    "planner",
+    "plan_executor",
+    "sql_generate",
+    "semantic_consistency",
+    "sql_execute",
+    "python_generate",
+    "python_execute",
+    "python_analyze",
+    "report_generator",
+    "human_feedback",
+})
+
 # TextType 枚举 — 对齐 Java TextType enum 和前端 TextType enum
 # 前端定义: JSON='JSON', PYTHON='PYTHON', SQL='SQL', HTML='HTML',
 #           MARK_DOWN='MARK_DOWN', RESULT_SET='RESULT_SET', TEXT='TEXT'
@@ -179,7 +200,6 @@ async def stream_workflow_execution(
     if not thread_id:
         thread_id = str(uuid.uuid4())
         
-    logger.info(f"[Stream] threadId={thread_id}")
     config = {"configurable": {"thread_id": thread_id}}
 
     try:
@@ -254,30 +274,10 @@ async def stream_workflow_execution(
                 semantic_model_prompt=semantic_model_prompt,
             )
 
-        # ===== 使用 astream(stream_mode="updates")  =====
-        # Python 没有 Java 的 Token 级 StreamingOutput，每次 node 执行完毕
-        # 产生一个完整的 state update，我们将其映射为一条 GraphNodeResponse
-        # 只对用户可见的节点发送 SSE — 对齐 Java 版本行为
-        # Java 中仅部分节点返回 StreamingOutput (Flux)，其余节点只返回 state 更新
-        # 内部节点 (RAG、Schema、校验等) 不应暴露给前端
-        user_visible_nodes = {
-            "intent_recognition",
-            "knowledge_recall",
-            "query_rewrite",
-            "schema_recall",
-            "table_relation",
-            "feasibility",
-            "planner",
-            "plan_executor",
-            "sql_generate",
-            "semantic_consistency",
-            "sql_execute",
-            "python_generate",
-            "python_execute",
-            "python_analyze",
-            "report_generator",
-            "human_feedback",
-        }
+        # ===== astream 事件循环 =====
+        # stream_mode="updates": 每个节点完成后产生 {node_name: state_update}
+        # Controller 将其映射为 GraphNodeResponse SSE 消息投递给前端
+        # ★ 只在 USER_VISIBLE_NODES 中的节点才推送 — 内部管线节点（RAG 回收等）不暴露
 
         # ===== 节点指标追踪 — 对齐 Java NodeMetrics =====
         tracker = NodeMetricsTracker(thread_id, agent_id)
@@ -302,7 +302,13 @@ async def stream_workflow_execution(
         }
 
         async def _record_metrics(status: str = "success") -> None:
-            """记录本次执行指标到数据库 (非致命)"""
+            """记录本次执行指标到数据库 (非致命)
+
+            status: 流程终止状态 — success / error / paused / cancelled
+            """
+            # 同步 hf_final_status 到指标，确保 DB 中可区分暂停/完成
+            if metrics_state.get("hf_final_status") is None:
+                metrics_state["hf_final_status"] = status
             try:
                 summary = tracker.summary()
                 node_durations = {
@@ -346,14 +352,14 @@ async def stream_workflow_execution(
             # {"__interrupt__": (Interrupt(value),)} instead of the node output.
             # We must handle this BEFORE the user_visible_nodes check below.
             if "__interrupt__" in event:
-                interrupt_data = event["__interrupt__"]
-                interrupt_value = None
-                if isinstance(interrupt_data, (list, tuple)) and len(interrupt_data) > 0:
-                    interrupt_value = interrupt_data[0].value if hasattr(interrupt_data[0], 'value') else interrupt_data[0]
-                elif hasattr(interrupt_data, 'value'):
-                    interrupt_value = interrupt_data.value
-                else:
-                    interrupt_value = interrupt_data
+                # LangGraph interrupt() 的封装格式：
+                #   {"__interrupt__": (Interrupt(value),)} — tuple 包装
+                #   {"__interrupt__": Interrupt(value)}   — 直接对象
+                # 统一提取内部 value
+                raw = event["__interrupt__"]
+                if isinstance(raw, (list, tuple)) and len(raw) > 0:
+                    raw = raw[0]
+                interrupt_value = getattr(raw, "value", raw)
 
                 logger.info(f"[Stream] Interrupt: {interrupt_value}")
 
@@ -381,7 +387,7 @@ async def stream_workflow_execution(
                 logger.info(f"[Stream] Node: {node_name}")
                 m = tracker.start_node(NODE_NAME_MAP.get(node_name, node_name))
 
-                if node_name not in user_visible_nodes:
+                if node_name not in USER_VISIBLE_NODES:
                     m.finish("success")
                     m.log()
                     continue
@@ -401,6 +407,7 @@ async def stream_workflow_execution(
                         metrics_state[key] = value
 
                 # ★ 意图识别：非 data_analysis 意图 → 提前结束流程
+                # TODO: intent 字段应通过 _metrics_delta 传递，避免 Controller 窥探节点内部
                 if node_name == "intent_recognition":
                     intent = node_output.get("intent", "")
                     if intent != "data_analysis":
@@ -425,6 +432,8 @@ async def stream_workflow_execution(
 
                 # ===== 节点指标状态判定 (NodeMetricsTracker) =====
                 # 大部分节点总是成功；少数节点可能失败
+                # TODO: 后续迁移 — 错误信号应由节点通过 _metrics_delta 声明，
+                #       而非 Controller 硬编码 node_name 窥探字段
                 status = "success"
                 if node_name == "sql_execute" and node_output.get("sql_error"):
                     status = "error"
@@ -432,8 +441,12 @@ async def stream_workflow_execution(
                     m.error_message = str(node_output.get("sql_error", ""))[:200]
                 elif node_name == "semantic_consistency" and not node_output.get("semantic_consistency_result", False):
                     status = "error"
+                    m.error_type = "SemanticConsistencyError"
+                    m.error_message = "语义一致性校验未通过"
                 elif node_name == "python_execute" and not node_output.get("python_is_success", False):
                     status = "error"
+                    m.error_type = "PythonExecuteError"
+                    m.error_message = str(node_output.get("python_error", ""))[:200]
                 m.finish(status)
                 m.log()
 
