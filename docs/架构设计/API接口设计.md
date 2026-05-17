@@ -11,10 +11,10 @@ Phase 1 提供 3 组 API：
 
 ## 基础信息
 
-- **Base URL**: `http://localhost:8100`
+- **Base URL**: `http://localhost:8200`
 - **API 前缀**: `/api`
 - **Content-Type**: `application/json`
-- **文档地址**: `http://localhost:8100/docs` (Swagger UI)
+- **文档地址**: `http://localhost:8200/docs` (Swagger UI)
 
 ---
 
@@ -469,7 +469,7 @@ Phase 1 提供 3 组 API：
 
 ### 创建 Agent
 ```bash
-curl -X POST "http://localhost:8100/api/agents" \
+curl -X POST "http://localhost:8200/api/agents" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "销售分析助手",
@@ -479,7 +479,7 @@ curl -X POST "http://localhost:8100/api/agents" \
 
 ### 创建数据源
 ```bash
-curl -X POST "http://localhost:8100/api/datasources" \
+curl -X POST "http://localhost:8200/api/datasources" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "生产数据库",
@@ -494,13 +494,13 @@ curl -X POST "http://localhost:8100/api/datasources" \
 
 ### 绑定数据源
 ```bash
-curl -X POST "http://localhost:8100/api/agents/1/datasources/1" \
+curl -X POST "http://localhost:8200/api/agents/1/datasources/1" \
   -H "Content-Type: application/json"
 ```
 
 ### 执行查询
 ```bash
-curl -X POST "http://localhost:8100/api/query" \
+curl -X POST "http://localhost:8200/api/query" \
   -H "Content-Type: application/json" \
   -d '{
     "agent_id": 1,

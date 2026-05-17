@@ -27,7 +27,7 @@
 #       │
 #       └── exception_handlers ──► 统一错误处理 (ApiResponse 格式)
 #
-# 【核心 URL 路径】 (前端 Vite :3000 → proxy → 本后端 :8100)
+# 【核心 URL 路径】 (前端 Vite :3000 → proxy → 本后端 :8200)
 #   GET  /api/stream/search       → 流式查询 (SSE) ← 前端核心调用
 #   GET  /api/agent/list          → Agent 管理
 #   POST /api/model-config/add    → LLM 模型配置
@@ -87,7 +87,7 @@ async def lifespan(app: FastAPI):
 
 # ===== 创建 FastAPI 应用 =====
 # FastAPI 是 Python 版 Spring Boot 的等价物
-# 它自动生成 OpenAPI 文档: http://localhost:8100/docs
+# 它自动生成 OpenAPI 文档: http://localhost:8200/docs
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
@@ -110,7 +110,7 @@ register_exception_handlers(app)
 app.add_middleware(ApiResponseMiddleware)
 
 # ===== 3. CORS 跨域中间件 =====
-# 允许前端 (Vite :3000) 跨域调用本后端 (:8100)
+# 允许前端 (Vite :3000) 跨域调用本后端 (:8200)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

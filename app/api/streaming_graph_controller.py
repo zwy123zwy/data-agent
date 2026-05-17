@@ -116,6 +116,34 @@ def _format_sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {payload}\n\n"
 
 
+def _log_sse_response(event: str, data: dict) -> None:
+    """Print a compact SSE response summary to the terminal.
+
+    Streaming responses are produced inside the async generator, so uvicorn's
+    normal access log only shows the initial 200 response. This log records the
+    actual SSE messages without dumping large report bodies into the terminal.
+    """
+    text = str(data.get("text") or "")
+    preview = text.replace("\r", " ").replace("\n", " ")[:200]
+    suffix = "..." if len(text) > 200 else ""
+    _eprint(
+        "[Stream] SSE "
+        f"event={event}, nodeName={data.get('nodeName')}, textType={data.get('textType')}, "
+        f"chars={len(text)}, error={data.get('error')}, complete={data.get('complete')}, "
+        f"text={preview}{suffix}"
+    )
+
+
+def _format_logged_sse_data(data: dict) -> str:
+    _log_sse_response("message", data)
+    return _format_sse_data(data)
+
+
+def _format_logged_sse_event(event: str, data: dict) -> str:
+    _log_sse_response(event, data)
+    return _format_sse_event(event, data)
+
+
 def _build_initial_state(
     agent_id: int,
     user_query: str,
@@ -169,7 +197,7 @@ async def stream_workflow_execution(
         _eprint(f"[stream_workflow_execution] agent_id={agent_id}, agent={agent}")
         
         if not agent:
-            yield _format_sse_event("error", _build_graph_response(
+            yield _format_logged_sse_event("error", _build_graph_response(
                 agent_id, thread_id, "", "Agent 不存在", TEXT_TYPE_TEXT, error=True
             ))
             await MetricsAggregationService.record_execution(
@@ -182,7 +210,7 @@ async def stream_workflow_execution(
         agent_ds_list = await AgentDatasourceService.list_agent_datasources(db, agent_id)
         active_agent_ds = next((item for item in agent_ds_list if item.is_active == 1), None)
         if not active_agent_ds:
-            yield _format_sse_event("error", _build_graph_response(
+            yield _format_logged_sse_event("error", _build_graph_response(
                 agent_id, thread_id, "", "没有激活的数据源", TEXT_TYPE_TEXT, error=True
             ))
             await MetricsAggregationService.record_execution(
@@ -333,12 +361,12 @@ async def stream_workflow_execution(
                 if isinstance(interrupt_value, dict):
                     java_name = NODE_NAME_MAP.get("human_feedback", "HumanFeedbackNode")
                     text = json.dumps(interrupt_value, ensure_ascii=False)
-                    yield _format_sse_data(_build_graph_response(
+                    yield _format_logged_sse_data(_build_graph_response(
                         agent_id, thread_id, java_name, text, TEXT_TYPE_JSON
                     ))
 
                 # Send paused event so frontend knows this is a normal pause, not an error
-                yield _format_sse_event("paused", _build_graph_response(
+                yield _format_logged_sse_event("paused", _build_graph_response(
                     agent_id, thread_id, NODE_NAME_MAP.get("human_feedback", ""), "", TEXT_TYPE_TEXT
                 ))
                 tracker.log_summary()
@@ -377,12 +405,12 @@ async def stream_workflow_execution(
                     intent = node_output.get("intent", "")
                     if intent != "data_analysis":
                         if sse:
-                            yield _format_sse_data(_build_graph_response(
+                            yield _format_logged_sse_data(_build_graph_response(
                                 agent_id, thread_id, java_name, sse["text"], sse["textType"]
                             ))
                         m.finish("success")
                         m.log()
-                        yield _format_sse_event("complete", _build_graph_response(
+                        yield _format_logged_sse_event("complete", _build_graph_response(
                             agent_id, thread_id, "", "", TEXT_TYPE_TEXT, complete=True
                         ))
                         tracker.log_summary()
@@ -391,7 +419,7 @@ async def stream_workflow_execution(
 
                 # ===== 通用 SSE 输出 — Controller 不窥探节点内部字段 =====
                 if sse:
-                    yield _format_sse_data(_build_graph_response(
+                    yield _format_logged_sse_data(_build_graph_response(
                         agent_id, thread_id, java_name, sse["text"], sse["textType"]
                     ))
 
@@ -413,7 +441,7 @@ async def stream_workflow_execution(
         logger.info(f"[Stream] Complete, threadId={thread_id}")
         tracker.log_summary()
         await _record_metrics("success")
-        yield _format_sse_event("complete", _build_graph_response(
+        yield _format_logged_sse_event("complete", _build_graph_response(
             agent_id, thread_id, "", "", TEXT_TYPE_TEXT, complete=True
         ))
 
@@ -429,7 +457,7 @@ async def stream_workflow_execution(
         logger.error(f"[Stream] Error for threadId={thread_id}: {e}\n{tb.format_exc()}")
         tracker.log_summary()
         await _record_metrics("error")
-        yield _format_sse_event("error", _build_graph_response(
+        yield _format_logged_sse_event("error", _build_graph_response(
             agent_id, thread_id, "", str(e), TEXT_TYPE_TEXT, error=True
         ))
 
@@ -453,6 +481,11 @@ async def stream_query(
 
     适用场景: 内部调用、测试、非浏览器客户端。
     """
+    _eprint(
+        "[Stream] Start POST, "
+        f"agentId={query_request.agent_id}, query={query_request.query}, "
+        f"threadId={query_request.workflow_id}"
+    )
     return StreamingResponse(
         stream_workflow_execution(
             agent_id=query_request.agent_id,

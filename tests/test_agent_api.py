@@ -8,7 +8,7 @@
 import requests
 import json
 
-BASE_URL = "http://localhost:8100"
+BASE_URL = "http://localhost:8200"
 
 
 def test_health():

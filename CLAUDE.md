@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Python Agent V2 — a progressive reproduction of the Java DataAgent using FastAPI + LangGraph. It implements Text-to-SQL + Python analysis + intelligent reporting via an LLM-powered workflow.
 
-**Port**: 8100 (dev), API docs at `http://localhost:8100/docs`
+**Port**: 8200 (dev), API docs at `http://localhost:8200/docs`
 
 ## Commands
 
@@ -21,7 +21,7 @@ python scripts/init_db.py
 python main.py --reload
 
 # Or directly via uvicorn
-uvicorn app.main:app --reload --port 8100
+uvicorn app.main:app --reload --port 8200
 
 # Run tests
 pytest tests/ -v

@@ -1,7 +1,7 @@
 """
 集成测试 — SSE 流式协议和会话 API
 
-运行前确保服务已启动: uvicorn app.main:app --host 0.0.0.0 --port 8100
+运行前确保服务已启动: uvicorn app.main:app --host 0.0.0.0 --port 8200
 """
 
 import requests
@@ -9,7 +9,7 @@ import json
 import time
 import pytest
 
-BASE_URL = "http://localhost:8100"
+BASE_URL = "http://localhost:8200"
 AGENT_ID = 3
 
 

@@ -137,7 +137,7 @@ class Settings(BaseSettings):
 
     # 服务 — 被 main.py 读取
     host: str = "0.0.0.0"
-    port: int = 8100
+    port: int = 8200
 
     # 日志
     log_level: str = "INFO"

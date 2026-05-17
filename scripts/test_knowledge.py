@@ -21,7 +21,7 @@ import httpx
 import asyncio
 import argparse
 
-BASE_URL = "http://127.0.0.1:8100"
+BASE_URL = "http://127.0.0.1:8200"
 TIMEOUT = 120  # bge-m3 首次 embedding 较慢
 
 PASS = 0
@@ -235,7 +235,7 @@ async def main():
     parser = argparse.ArgumentParser(description="知识库 API 测试")
     parser.add_argument("--agent-id", type=int, default=3, help="Agent ID (默认 3)")
     parser.add_argument("--quick", action="store_true", help="快速模式 (跳过向量化和文件上传)")
-    parser.add_argument("--base-url", default="http://127.0.0.1:8100", help="服务器地址")
+    parser.add_argument("--base-url", default="http://127.0.0.1:8200", help="服务器地址")
     args = parser.parse_args()
 
     BASE_URL = args.base_url
