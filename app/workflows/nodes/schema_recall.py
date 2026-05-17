@@ -41,8 +41,11 @@ class SchemaRecallNode(WorkflowNode):
                 datasource = await AgentDatasourceService.get_active_datasource(session, agent_id)
 
                 if not datasource:
-                    logger.error(f"Agent {agent_id} 没有激活的数据源")
-                    return {"error": "No active datasource found for this Agent"}
+                    logger.warning(f"Agent {agent_id} 没有激活的数据源 — 无法进行数据分析")
+                    return {
+                        "error": "No active datasource found for this Agent",
+                        "_no_datasource": True,  # 标记，供 format_sse 识别
+                    }
 
                 schema_ddl = await SchemaService.get_database_ddl(datasource)
                 schema_dict = await SchemaService.get_database_schema(datasource)
@@ -57,7 +60,20 @@ class SchemaRecallNode(WorkflowNode):
             logger.error(f"Schema 召回失败: {str(e)}", exc_info=True)
             return {"error": f"Schema recall failed: {str(e)}"}
 
-    def format_sse(self, output: Dict[str, Any]) -> SSEPayload:
+    def format_sse(self, output: Dict[str, Any]) -> SSEPayload | None:
+        # 无数据源 → 明确告知用户，不继续走数据分析链路
+        if output.get("_no_datasource"):
+            return SSEPayload(
+                text="当前 Agent 没有配置数据源，请先在 Agent 设置中绑定一个数据库。",
+                text_type="TEXT",
+            )
+        # 召回异常 → 告知用户并提供错误信息
+        if output.get("error") and not output.get("schema_info"):
+            return SSEPayload(
+                text=f"数据库 Schema 加载失败：{output['error']}",
+                text_type="TEXT",
+            )
+        # 正常召回 → 报告发现的表数量
         schema_info = output.get("schema_info", {})
         tables = schema_info.get("tables", []) if isinstance(schema_info, dict) else []
         table_count = len(tables)

@@ -238,15 +238,10 @@ async def stream_workflow_execution(
             select_tables = []
             semantic_model_prompt = ""
             if active_agent_ds is None:
-                # 无激活数据源 → 记录错误但流程继续
-                # （纯对话类 Agent 不需要数据源，Schema 相关节点会自行降级处理）
-                yield _format_logged_sse_event("error", _build_graph_response(
-                    agent_id, thread_id, "", "没有激活的数据源", TEXT_TYPE_TEXT, error=True
-                ))
-                await MetricsAggregationService.record_execution(
-                    db, thread_id=thread_id, agent_id=agent_id, status="error",
-                    total_duration_ms=0, total_nodes=0, succeeded_nodes=0, failed_nodes=1,
-                )
+                # 无激活数据源 → 不在此报错，让 workflow 正常启动
+                # intent_recognition 先判断意图：闲聊直接回，数据分析走到 schema_recall 时
+                # 由 schema_recall 告知用户"请先配置数据源"
+                logger.info("[Stream] No active datasource — workflow will handle gracefully")
             else:
                 datasource_id = active_agent_ds.datasource_id
                 select_tables = active_agent_ds.select_tables

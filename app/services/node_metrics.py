@@ -117,6 +117,7 @@ class NodeMetricsTracker:
         )
         m.retry_count = retry_count
         m.start()
+        logger.info(f"[Metrics] start node {node_name}")
         self.node_executions.append(m)
         return m
 

@@ -1,12 +1,11 @@
 """
-意图识别节点 — 对齐 Java IntentRecognitionNode
-
-Harness 角色: 入口节点，识别用户是想做数据分析还是闲聊。
-若非数据分析则短路返回，避免后续节点无效执行。
-
-I/O 契约:
-  requires: user_query, multi_turn_context
-  provides: intent, classification
+意图识别节点
+输入:
+- user_query: 用户问题
+- multi_turn_context: 多轮对话上下文
+输出:
+- intent: data_analysis / chitchat
+- classification: 意图分类说明（可选）
 """
 
 from ..state import WorkflowState
@@ -35,7 +34,7 @@ INTENT_SYSTEM_PROMPT = """你是一个意图识别助手。
 
 
 class IntentRecognitionNode(WorkflowNode):
-    """意图识别 — 对齐 Java IntentRecognitionNode.apply()
+    """意图识别
 
     判断用户是想做数据分析还是闲聊。
     若为闲聊则设置 intent=chitchat，路由层据此短路到 END。
