@@ -174,81 +174,85 @@ async def stream_workflow_execution(
     rejected_plan: bool = False,
     nl2sql_only: bool = False,
 ):
-    """流式执行工作流
 
-    SSE 格式对齐 Java:
-      - 每个节点输出 → 一条 data: GraphNodeResponse JSON (无 event: 前缀)
-      - 流程完成 → event: complete + GraphNodeResponse(complete=true)
-      - 流程错误 → event: error + GraphNodeResponse(error=true)
-    """
     logger.info(f"[Stream] Start, agentId={agent_id}, query={user_query}, threadId={thread_id}")
     if not thread_id:
         thread_id = str(uuid.uuid4())
-
+        
+    logger.info(f"[Stream] threadId={thread_id}")
     config = {"configurable": {"thread_id": thread_id}}
 
     try:
-        # 检查 Agent
-        agent = await AgentService.get_agent(db, agent_id)
-        logger.info(f"[stream_workflow_execution] agent_id={agent_id}, agent={agent}")
-        
-        if not agent:
-            yield _format_logged_sse_event("error", _build_graph_response(
-                agent_id, thread_id, "", "Agent 不存在", TEXT_TYPE_TEXT, error=True
-            ))
-            await MetricsAggregationService.record_execution(
-                db, thread_id=thread_id, agent_id=agent_id, status="error",
-                total_duration_ms=0, total_nodes=0, succeeded_nodes=0, failed_nodes=1,
-            )
-            return
+        # =====================================================================
+        # 资源准备：按路径分流，只在需要时获取对应资源
+        #   - HumanFeedback resume → 跳过所有 DB 查询，直接从 checkpoint 恢复
+        #   - 新请求             → Agent → Datasource → SemanticModel 按依赖顺序加载
+        # =====================================================================
 
-        # 检查数据源 — 获取激活的数据源及其 select_tables
-        agent_ds_list = await AgentDatasourceService.list_agent_datasources(db, agent_id)
-        active_agent_ds = next((item for item in agent_ds_list if item.is_active == 1), None)
-        if not active_agent_ds:
-            yield _format_logged_sse_event("error", _build_graph_response(
-                agent_id, thread_id, "", "没有激活的数据源", TEXT_TYPE_TEXT, error=True
-            ))
-            await MetricsAggregationService.record_execution(
-                db, thread_id=thread_id, agent_id=agent_id, status="error",
-                total_duration_ms=0, total_nodes=0, succeeded_nodes=0, failed_nodes=1,
-            )
-            return
-        datasource_id = active_agent_ds.datasource_id
-        select_tables = active_agent_ds.select_tables
-
-        # 构建语义模型 Prompt
-        semantic_model_prompt = ""
-        if select_tables:
-            parts = []
-            for table_name in select_tables:
-                info = await SemanticModelService.get_table_semantic_info(
-                    db, agent_id, datasource_id, table_name
-                )
-                if info:
-                    parts.append(info)
-            semantic_model_prompt = "\n".join(parts)
-            if semantic_model_prompt:
-                logger.info(f"[Stream] Built semantic model prompt for {len(select_tables)} tables ({len(semantic_model_prompt)} chars)")
-
-        # 构建初始状态
-        initial_state = _build_initial_state(
-            agent_id=agent_id,
-            user_query=user_query,
-            nl2sql_only=nl2sql_only,
-            human_review=human_feedback,
-            semantic_model_prompt=semantic_model_prompt,
-        )
-
-        # ===== 恢复路径：处理 HumanFeedback resume =====
         if thread_id and human_feedback_content:
+            # ===== 恢复路径：LangGraph 从 checkpoint 恢复状态，不需要任何外部资源 =====
             action = "reject" if rejected_plan else "approve"
-            resume_cmd = Command(
-                resume={"action": action, "reason": human_feedback_content},
-            )
-            graph_input = resume_cmd
+            graph_input = Command(resume={"action": action, "reason": human_feedback_content})
+            select_tables = []
         else:
-            graph_input = initial_state
+            # ===== 新请求路径：按依赖顺序获取资源 =====
+
+            # 1. 校验 Agent 存在性 — 提前失败，避免后续白查数据源
+            agent = await AgentService.get_agent(db, agent_id)
+            if not agent:
+                yield _format_logged_sse_event("error", _build_graph_response(
+                    agent_id, thread_id, "", "Agent 不存在", TEXT_TYPE_TEXT, error=True
+                ))
+                await MetricsAggregationService.record_execution(
+                    db, thread_id=thread_id, agent_id=agent_id, status="error",
+                    total_duration_ms=0, total_nodes=0, succeeded_nodes=0, failed_nodes=1,
+                )
+                return
+
+            # 2. 获取激活的数据源及其 select_tables（只查一次）
+            agent_ds_list = await AgentDatasourceService.list_agent_datasources(db, agent_id)
+            active_agent_ds = next((item for item in agent_ds_list if item.is_active == 1), None)
+
+            # 3. 按条件构建语义模型 Prompt
+            datasource_id = None
+            select_tables = []
+            semantic_model_prompt = ""
+            if active_agent_ds is None:
+                # 无激活数据源 → 记录错误但流程继续
+                # （纯对话类 Agent 不需要数据源，Schema 相关节点会自行降级处理）
+                yield _format_logged_sse_event("error", _build_graph_response(
+                    agent_id, thread_id, "", "没有激活的数据源", TEXT_TYPE_TEXT, error=True
+                ))
+                await MetricsAggregationService.record_execution(
+                    db, thread_id=thread_id, agent_id=agent_id, status="error",
+                    total_duration_ms=0, total_nodes=0, succeeded_nodes=0, failed_nodes=1,
+                )
+            else:
+                datasource_id = active_agent_ds.datasource_id
+                select_tables = active_agent_ds.select_tables
+                if select_tables:
+                    parts = []
+                    for table_name in select_tables:
+                        info = await SemanticModelService.get_table_semantic_info(
+                            db, agent_id, datasource_id, table_name
+                        )
+                        if info:
+                            parts.append(info)
+                    semantic_model_prompt = "\n".join(parts)
+                    if semantic_model_prompt:
+                        logger.info(
+                            f"[Stream] Built semantic model prompt for "
+                            f"{len(select_tables)} tables ({len(semantic_model_prompt)} chars)"
+                        )
+
+            # 4. 构建初始状态（含空语义模型的降级状态）
+            graph_input = _build_initial_state(
+                agent_id=agent_id,
+                user_query=user_query,
+                nl2sql_only=nl2sql_only,
+                human_review=human_feedback,
+                semantic_model_prompt=semantic_model_prompt,
+            )
 
         # ===== 使用 astream(stream_mode="updates")  =====
         # Python 没有 Java 的 Token 级 StreamingOutput，每次 node 执行完毕
