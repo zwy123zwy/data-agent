@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 2026-05-17
+
+- **日志终端可见修复**: `streaming_graph_controller.py` 添加 StreamHandler 到模块 logger，确保 uvicorn worker 子进程中 `logger.info()` 输出到终端。
+
 ## 2026-05-16
 
 - **WorkflowNode 基类 + 16 节点重构**: 创建 `app/workflows/node_base.py` — SSEPayload dataclass + WorkflowNode ABC（自声明 requires/provides/applicable_data_sources，自动 Langfuse 埋点 + sse_output 注入）。16 个 LangGraph 节点全部从独立 async 函数改为 WorkflowNode 子类，每个节点实现 `execute()` + `format_sse()`。Controller 的 260 行 if/elif 分发链替换为 50 行通用 sse_output 读取逻辑。移除 `_NODE_MSG` 冗余映射（每个节点的 format_sse 自描述输出）。移除 `app/workflows/node_messages.py`。graph.py 无需修改（节点实例保持 callable）。
