@@ -44,6 +44,11 @@ from .core.database import init_db, engine, async_session_maker
 from .core.llm import llm_service
 from .core.exception_handlers import register_exception_handlers
 from .core.response_middleware import ApiResponseMiddleware
+from .core.log_config import setup_logging
+
+# ★ 必须在 FastAPI() 之前调用，确保 root logger handler 在 uvicorn reload 子进程中就位
+setup_logging()
+
 from .api import (
     agent_controller,                    # Agent CRUD + API Key
     datasource_controller,               # 数据源 CRUD + 测试连接

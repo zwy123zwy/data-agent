@@ -35,11 +35,7 @@ import json
 import logging
 import uuid
 
-import sys
 logger = logging.getLogger(__name__)
-# uvicorn reload 子进程会重置 logging 配置，StreamHandler 可能被覆盖
-# 用 print(file=sys.stderr) 保证终端可见
-_eprint = lambda *a, **kw: print(*a, file=sys.stderr, flush=True, **kw)
 
 router = APIRouter(prefix="/api", tags=["流式查询"])
 
@@ -126,7 +122,7 @@ def _log_sse_response(event: str, data: dict) -> None:
     text = str(data.get("text") or "")
     preview = text.replace("\r", " ").replace("\n", " ")[:200]
     suffix = "..." if len(text) > 200 else ""
-    _eprint(
+    logger.info(
         "[Stream] SSE "
         f"event={event}, nodeName={data.get('nodeName')}, textType={data.get('textType')}, "
         f"chars={len(text)}, error={data.get('error')}, complete={data.get('complete')}, "
@@ -185,7 +181,7 @@ async def stream_workflow_execution(
       - 流程完成 → event: complete + GraphNodeResponse(complete=true)
       - 流程错误 → event: error + GraphNodeResponse(error=true)
     """
-    _eprint(f"[Stream] Start, agentId={agent_id}, query={user_query}, threadId={thread_id}")
+    logger.info(f"[Stream] Start, agentId={agent_id}, query={user_query}, threadId={thread_id}")
     if not thread_id:
         thread_id = str(uuid.uuid4())
 
@@ -194,7 +190,7 @@ async def stream_workflow_execution(
     try:
         # 检查 Agent
         agent = await AgentService.get_agent(db, agent_id)
-        _eprint(f"[stream_workflow_execution] agent_id={agent_id}, agent={agent}")
+        logger.info(f"[stream_workflow_execution] agent_id={agent_id}, agent={agent}")
         
         if not agent:
             yield _format_logged_sse_event("error", _build_graph_response(
@@ -481,7 +477,7 @@ async def stream_query(
 
     适用场景: 内部调用、测试、非浏览器客户端。
     """
-    _eprint(
+    logger.info(
         "[Stream] Start POST, "
         f"agentId={query_request.agent_id}, query={query_request.query}, "
         f"threadId={query_request.workflow_id}"
@@ -517,7 +513,7 @@ async def stream_search_legacy(
     nl2sqlOnly: bool = Query(False, description="仅NL2SQL模式"),
     db: AsyncSession = Depends(get_db),
 ):
-    _eprint(f"[Stream] Start, agentId={agentId}, query={query}, threadId={threadId}")
+    logger.info(f"[Stream] Start, agentId={agentId}, query={query}, threadId={threadId}")
     return StreamingResponse(
         stream_workflow_execution(
             agent_id=agentId,
