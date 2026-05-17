@@ -1,4 +1,4 @@
-"""人工反馈 API — 对齐 Java (LangGraph interrupt + HumanFeedback entity)"""
+"""人工反馈 API """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select

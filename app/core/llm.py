@@ -1,26 +1,4 @@
-"""
-统一 LLM 服务 — 所有 AI 调用的唯一出口
 
-【模型配置优先级】
-  1. ModelRegistry (MySQL model_config 表, is_active=1)  ← 热切换
-  2. .env 文件 (OPENAI_API_KEY/BASE/MODEL)             ← 兜底
-
-【热切换流程 — 对齐 Java AiModelRegistry + LlmService】
-  1. 用户 POST /api/model-config/activate/{id}
-  2. ModelConfigOpsService → DB 更新 → llm_service.invalidate()  ← 清缓存
-  3. 下一个 LLM 调用 → _ensure_configured() 检测到 needs_rebuild
-     → 查 DB 获取激活模型 → configure() 重建客户端
-  4. 后续调用直接命中缓存，零 DB 开销
-
-【Java 对应】
-  清缓存:  refreshChat() → currentChatClient = null
-  懒重建:  getChatClient() → if null → DB 查询 → 重建
-  Python:  invalidate() → _needs_rebuild = True
-           _ensure_configured() → if True → DB 查询 → configure()
-
-【全局单例】
-  llm_service = LLMService() — 模块级单例，所有节点共享
-"""
 from typing import Optional, AsyncIterator
 from openai import AsyncOpenAI
 from .config import settings

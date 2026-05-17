@@ -1,32 +1,4 @@
-"""
-同步查询 API — 对齐 Java GraphController (非流式)
 
-【在系统中的地位】
-  这是同步版的数据分析 API。与 streaming_graph_controller 的 SSE 流式不同，
-  本文件使用 ainvoke() 一次性执行完整工作流，等待所有节点完成后返回结果。
-
-【模块连接】
-  上游 (前端调用):
-    - POST /api/query → 同步执行数据分析并返回完整报告
-
-  与流式 API 的对比:
-    ┌──────────────────┬─────────────────────┬──────────────────────┐
-    │                  │ 本文件 (同步)        │ streaming (流式)      │
-    ├──────────────────┼─────────────────────┼──────────────────────┤
-    │ FastAPI 端点      │ POST /api/query      │ GET /api/stream/search│
-    │ LangGraph 方法    │ ainvoke()            │ astream()            │
-    │ 响应方式          │ JSON (一次性返回)     │ SSE (逐事件推送)      │
-    │ 适用场景          │ 简短查询、API 调用    │ 长分析、前端实时展示   │
-    │ HumanFeedback     │ 不支持中断恢复        │ 支持暂停→恢复         │
-    └──────────────────┴─────────────────────┴──────────────────────┘
-
-  调用链:
-    POST /api/query → compiled_workflow.ainvoke(state, config)
-    → 16 个节点依次执行 → 返回 QueryResponse JSON
-
-  Java 对应:
-    graph_controller.py ≈ GraphController.java (非 SSE 部分)
-"""
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from langgraph.types import Command
@@ -68,7 +40,7 @@ async def execute_query(
     query_request: QueryRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """执行查询（核心接口）— 对齐 Java GraphController
+    """执行查询（核心接口）
 
     工作流拓扑:
     1. IntentRecognition → 意图识别

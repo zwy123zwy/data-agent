@@ -1,6 +1,4 @@
-"""
-PromptConfig API — 对齐 Java PromptConfigController (14 个端点)
-"""
+
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,7 +29,7 @@ async def save_config(
     dto: PromptConfigSaveRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """创建或更新 Prompt 配置 — 对齐 Java POST /api/prompt-config/save"""
+    """创建或更新 Prompt 配置 """
     cfg = await PromptConfigService.save_or_update(db, dto)
     return ApiResponse.ok(
         data=PromptConfigResponse.model_validate(cfg).model_dump(by_alias=True),
@@ -45,7 +43,7 @@ async def save_config(
 
 @router.get("/list", summary="获取所有配置")
 async def list_configs(db: AsyncSession = Depends(get_db)):
-    """获取所有配置 — 对齐 Java GET /api/prompt-config/list"""
+    """获取所有配置 """
     configs = await PromptConfigService.get_all(db)
     return {
         "success": True,
@@ -60,7 +58,7 @@ async def list_by_type(
     agent_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """按类型+Agent查询 — 对齐 Java GET /api/prompt-config/list-by-type/{promptType}?agentId="""
+    """按类型+Agent查询"""
     configs = await PromptConfigService.get_by_type(db, prompt_type, agent_id)
     return {
         "success": True,
@@ -75,7 +73,7 @@ async def get_active_config(
     agent_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """获取当前激活的配置 — 对齐 Java GET /api/prompt-config/active/{promptType}?agentId="""
+    """获取当前激活的配置 """
     cfg = await PromptConfigService.get_active_by_type(db, prompt_type, agent_id)
     return {
         "success": True,
@@ -90,7 +88,7 @@ async def get_active_configs(
     agent_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """获取所有激活的配置 — 对齐 Java GET /api/prompt-config/active-all/{promptType}?agentId="""
+    """获取所有激活的配置 """
     configs = await PromptConfigService.get_active_all_by_type(db, prompt_type, agent_id)
     return {
         "success": True,
@@ -102,7 +100,7 @@ async def get_active_configs(
 
 @router.get("/types", summary="获取支持的提示词类型")
 async def get_types():
-    """获取支持的提示词类型 — 对齐 Java GET /api/prompt-config/types"""
+    """获取支持的提示词类型"""
     return ApiResponse.ok(data=SUPPORTED_PROMPT_TYPES)
 
 
@@ -112,14 +110,14 @@ async def get_types():
 
 @router.post("/batch-enable", summary="批量启用")
 async def batch_enable(ids: List[str] = Body(...), db: AsyncSession = Depends(get_db)):
-    """批量启用 — 对齐 Java POST /api/prompt-config/batch-enable"""
+    """批量启用 """
     await PromptConfigService.batch_enable(db, ids)
     return ApiResponse.ok(message="批量启用配置成功")
 
 
 @router.post("/batch-disable", summary="批量禁用")
 async def batch_disable(ids: List[str] = Body(...), db: AsyncSession = Depends(get_db)):
-    """批量禁用 — 对齐 Java POST /api/prompt-config/batch-disable"""
+    """批量禁用"""
     await PromptConfigService.batch_disable(db, ids)
     return ApiResponse.ok(message="批量禁用配置成功")
 
@@ -130,7 +128,7 @@ async def batch_disable(ids: List[str] = Body(...), db: AsyncSession = Depends(g
 
 @router.get("/{config_id}", summary="获取配置详情")
 async def get_config(config_id: str, db: AsyncSession = Depends(get_db)):
-    """获取配置详情 — 对齐 Java GET /api/prompt-config/{id}"""
+    """获取配置详情"""
     cfg = await PromptConfigService.get_by_id(db, config_id)
     if not cfg:
         return ApiResponse.fail(message="配置不存在")
@@ -143,7 +141,7 @@ async def get_config(config_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.delete("/{config_id}", summary="删除配置")
 async def delete_config(config_id: str, db: AsyncSession = Depends(get_db)):
-    """删除配置 — 对齐 Java DELETE /api/prompt-config/{id}"""
+    """删除配置 """
     ok = await PromptConfigService.delete_config(db, config_id)
     if not ok:
         return ApiResponse.fail(message="配置不存在或删除失败")
@@ -156,7 +154,7 @@ async def delete_config(config_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.post("/{config_id}/enable", summary="启用配置")
 async def enable_config(config_id: str, db: AsyncSession = Depends(get_db)):
-    """启用配置 — 对齐 Java POST /api/prompt-config/{id}/enable"""
+    """启用配置"""
     ok = await PromptConfigService.enable_config(db, config_id)
     if not ok:
         return ApiResponse.fail(message="配置不存在或启用失败")
@@ -165,7 +163,7 @@ async def enable_config(config_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.post("/{config_id}/disable", summary="禁用配置")
 async def disable_config(config_id: str, db: AsyncSession = Depends(get_db)):
-    """禁用配置 — 对齐 Java POST /api/prompt-config/{id}/disable"""
+    """禁用配置 """
     ok = await PromptConfigService.disable_config(db, config_id)
     if not ok:
         return ApiResponse.fail(message="配置不存在或禁用失败")
@@ -182,7 +180,7 @@ async def update_priority(
     body: PriorityUpdateRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """更新优先级 — 对齐 Java POST /api/prompt-config/{id}/priority"""
+    """更新优先级"""
     ok = await PromptConfigService.update_priority(db, config_id, body.priority)
     if not ok:
         return ApiResponse.fail(message="更新优先级失败")
@@ -195,7 +193,7 @@ async def update_display_order(
     body: DisplayOrderUpdateRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """更新显示顺序 — 对齐 Java POST /api/prompt-config/{id}/display-order"""
+    """更新显示顺序 """
     ok = await PromptConfigService.update_display_order(db, config_id, body.display_order)
     if not ok:
         return ApiResponse.fail(message="更新显示顺序失败")
