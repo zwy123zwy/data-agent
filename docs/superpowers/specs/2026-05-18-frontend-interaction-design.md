@@ -514,7 +514,7 @@ function truncateText(text: string, maxLen: number = 80): string {
 | `PythonAnalyzeNode` | 🧠 正在解读分析结果… | +tool: analyze_result |
 | `ReportGeneratorNode` | 🧠 正在生成分析报告… | +Round 3 Reporter, Analyst round → done |
 | `HumanFeedbackNode` (interrupt) | ⏸️ 等待人工确认… | 抽屉暂停动画, 输入区出现确认/拒绝按钮 |
-| `event: complete` | 淡出消失 (AI 回复出现后 1s) | 抽屉保持, 执行状态置灰 |
+| `event: complete` | 淡出消失 (AI 回复出现后 1s) | 抽屉保持, 顶部显示 `✓ 执行完成` 提示 |
 | `event: error` | 显示错误提示 | 抽屉保留, 失败 Round 变红 |
 | `event: paused` | 更新为等待确认 | 暂停状态显示 |
 
