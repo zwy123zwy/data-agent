@@ -2,6 +2,7 @@
 
 ## 2026-05-18
 
+- **V3.0 全节点 format_sse 升级**: 13 个 Workflow Node 的 `format_sse()` 方法统一声明 `agentName`/`toolName`/`toolStatus`/`toolSummary`。Explorer 节点 (8): intent_recognition, knowledge_recall, query_rewrite, schema_recall, table_relation, feasibility, planner, plan_executor。Analyst 节点 (6): sql_generate (text_to_sql), semantic_consistency (semantic_check), sql_execute (execute_sql), python_generate (text_to_python), python_execute (run_python), python_analyze (analyze_result)。Reporter 节点 (1): report_generator。终端节点 (2): chitchat_node, human_feedback_node。旧代码注释保留，新增字段均为 Optional，向后兼容。
 - **前端交互模式设计文档**: 新增 `docs/superpowers/specs/2026-05-18-frontend-interaction-design.md`。确定 B 方案（两栏+可展开抽屉）、思考气泡单例刷新、执行面板手动关闭、节点三种交互（展开 tool / 定位气泡 / Popover 详情）、Zustand executionStore 状态结构和 SSE→UI 完整映射表。经 4 轮审计修复（15 个问题），前后端协议字段统一对齐 `NODE_NAME_MAP`。
 - **前端交互模式全栈实施文档**: 新增 `docs/superpowers/plans/2026-05-18-frontend-interaction-implementation.md`。1746 行全栈技术文档，含前端 8 个 Task（executionStore、ThinkingBubble、ExecutionDrawer、AgentRound、ToolItem 组件 + streamRequest.ts/AgentRun.tsx 改造）+ 后端 3 个 Task（SSEPayload 协议升级、Controller 透传、17 节点 format_sse 声明 agentName/toolName）+ 集成验证 4 场景。前后端接口契约完整对齐。经审计修复 10 个问题（3 P0 + 5 P1 + 2 P2）。
 - **闲聊回复节点 (chitchat_node)**: 意图识别为非数据分析时，不再静默 END，改为通过 `chitchat_node` 调用 LLM 生成友好的中文对话回复。`graph.py` 路由 `route_after_intent` 新增 `chitchat_node` 分支。`streaming_graph_controller.py` 注册 `NODE_NAME_MAP` 和 `USER_VISIBLE_NODES`。
