@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 2026-05-18
+
+- **闲聊回复节点 (chitchat_node)**: 意图识别为非数据分析时，不再静默 END，改为通过 `chitchat_node` 调用 LLM 生成友好的中文对话回复。`graph.py` 路由 `route_after_intent` 新增 `chitchat_node` 分支。`streaming_graph_controller.py` 注册 `NODE_NAME_MAP` 和 `USER_VISIBLE_NODES`。
+
 ## 2026-05-17
 
 - **意图识别置信度 + 人工确认闭环**: `intent_recognition.py` 新增 confidence 字段（LLM 自评 0.0-1.0），置信度 < 0.7 时通过 `interrupt()` 暂停等人工确认，用户反馈喂回 LLM 重判（最多 1 次）。`streaming_graph_controller.py` 接入 `MultiTurnContextManager`（请求前读历史上下文，完成后记录本轮对话），interrupt 处理器支持 `intent_confirm` 类型检测。`state.py` 新增 4 个 state key。
