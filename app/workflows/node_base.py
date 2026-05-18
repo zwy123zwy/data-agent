@@ -25,10 +25,21 @@ class SSEPayload:
     """节点对前端的自描述输出 — Controller 只转发，不解析
 
     Java 对应: GraphNodeResponse 的 text + textType 字段
+
+    V3.0 新增字段 (全部可选, 向后兼容):
+      - agent_name:  所属 Agent (Explorer/Analyst/Reporter)
+      - tool_name:   当前 tool 名称 (get_schema / execute_sql / text_to_sql / ...)
+      - tool_status: tool 执行状态 (pending / running / done / error)
+      - tool_summary: tool 结果摘要 (单行, < 80 字符)
     """
     text: str
     text_type: str = "TEXT"  # SQL | JSON | HTML | MARK_DOWN | RESULT_SET | PYTHON | TEXT
     metrics_delta: Dict[str, Any] = field(default_factory=dict)
+    # V3.0: Agent/Tool 归属声明 — Phase 2 前端直接读取, 不再需要 nodeName 硬编码推断
+    agent_name: Optional[str] = None    # Explorer | Analyst | Reporter
+    tool_name: Optional[str] = None     # get_schema | execute_sql | text_to_sql | ...
+    tool_status: Optional[str] = None   # pending | running | done | error
+    tool_summary: Optional[str] = None  # 单行结果摘要
 
 
 class WorkflowNode(ABC):
@@ -128,11 +139,31 @@ class WorkflowNode(ABC):
 
             # 自动注入 SSE 输出
             sse = self.format_sse(result)
+            # [旧代码] 只注入 text + textType
+            # if sse is not None:
+            #     result["sse_output"] = {
+            #         "text": sse.text,
+            #         "textType": sse.text_type,
+            #     }
+            #     if sse.metrics_delta:
+            #         result.setdefault("_metrics_delta", {}).update(sse.metrics_delta)
             if sse is not None:
-                result["sse_output"] = {
+                sse_dict = {
                     "text": sse.text,
                     "textType": sse.text_type,
                 }
+                # V3.0: 透传 Agent/Tool 归属声明到 Controller → 前端
+                # 仅非 None 时注入, 避免 SSE 消息中出现 null 值字段
+                if sse.agent_name:
+                    sse_dict["agentName"] = sse.agent_name
+                if sse.tool_name:
+                    sse_dict["toolName"] = sse.tool_name
+                if sse.tool_status:
+                    sse_dict["toolStatus"] = sse.tool_status
+                if sse.tool_summary:
+                    sse_dict["toolSummary"] = sse.tool_summary
+                result["sse_output"] = sse_dict
+                # ★ 保留 metrics_delta: Controller 依赖此字段收集核心指标
                 if sse.metrics_delta:
                     result.setdefault("_metrics_delta", {}).update(sse.metrics_delta)
 

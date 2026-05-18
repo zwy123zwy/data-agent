@@ -111,9 +111,27 @@ def _build_graph_response(
     text_type: str = "TEXT",
     error: bool = False,
     complete: bool = False,
+    # V3.0: Agent/Tool 归属 — Phase 2 后端主动发送, 前端直接读取
+    agent_name: str | None = None,
+    tool_name: str | None = None,
+    tool_status: str | None = None,
+    tool_summary: str | None = None,
 ) -> dict:
-    """构建 GraphNodeResponse 响应"""
-    return {
+    """构建 GraphNodeResponse 响应
+
+    V3.0 新增字段仅非 None 时序列化, 向后兼容 Phase 1 前端.
+    """
+    # [旧代码] 仅包含 V2.0 7 个固定字段
+    # return {
+    #     "agentId": str(agent_id),
+    #     "threadId": thread_id or "",
+    #     "nodeName": node_name,
+    #     "textType": text_type,
+    #     "text": text or "",
+    #     "error": error,
+    #     "complete": complete,
+    # }
+    response = {
         "agentId": str(agent_id),
         "threadId": thread_id or "",
         "nodeName": node_name,
@@ -122,6 +140,16 @@ def _build_graph_response(
         "error": error,
         "complete": complete,
     }
+    # V3.0 可选字段: 仅非 None 时序列化, 避免向前端发送 null 值
+    if agent_name is not None:
+        response["agentName"] = agent_name
+    if tool_name is not None:
+        response["toolName"] = tool_name
+    if tool_status is not None:
+        response["toolStatus"] = tool_status
+    if tool_summary is not None:
+        response["toolSummary"] = tool_summary
+    return response
 
 
 def _format_sse_data(data: dict) -> str:
@@ -426,8 +454,18 @@ async def stream_workflow_execution(
                     intent = node_output.get("intent", "")
                     if intent != "data_analysis":
                         if sse:
+                            # [旧代码] 只传 V2.0 字段
+                            # yield _format_logged_sse_data(_build_graph_response(
+                            #     agent_id, thread_id, java_name, sse["text"], sse["textType"]
+                            # ))
                             yield _format_logged_sse_data(_build_graph_response(
-                                agent_id, thread_id, java_name, sse["text"], sse["textType"]
+                                agent_id, thread_id, java_name,
+                                text=sse["text"],
+                                text_type=sse["textType"],
+                                agent_name=sse.get("agentName"),
+                                tool_name=sse.get("toolName"),
+                                tool_status=sse.get("toolStatus"),
+                                tool_summary=sse.get("toolSummary"),
                             ))
                         m.finish("success")
                         m.log()
@@ -440,9 +478,21 @@ async def stream_workflow_execution(
                         return
 
                 # ===== 通用 SSE 输出 — Controller 不窥探节点内部字段 =====
+                # V3.0: 透传各节点 format_sse() 声明的 agentName/toolName/toolStatus/toolSummary
+                # Phase 1 前端忽略这些字段, Phase 2 前端直接读取不再需要 NODE_TO_EXECUTION 硬编码
                 if sse:
+                    # [旧代码] 只传 V2.0 字段
+                    # yield _format_logged_sse_data(_build_graph_response(
+                    #     agent_id, thread_id, java_name, sse["text"], sse["textType"]
+                    # ))
                     yield _format_logged_sse_data(_build_graph_response(
-                        agent_id, thread_id, java_name, sse["text"], sse["textType"]
+                        agent_id, thread_id, java_name,
+                        text=sse["text"],
+                        text_type=sse["textType"],
+                        agent_name=sse.get("agentName"),
+                        tool_name=sse.get("toolName"),
+                        tool_status=sse.get("toolStatus"),
+                        tool_summary=sse.get("toolSummary"),
                     ))
 
                 # ===== 节点指标状态判定 (NodeMetricsTracker) =====
