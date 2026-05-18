@@ -13,7 +13,7 @@
     - core/model_registry.py    → settings.openai_* (模型测试)
     - workflows/graph.py        → settings.max_sql_retry_count (重试次数)
     - workflows/nodes/*.py      → settings.* (各种业务配置)
-    - services/hybrid_search.py → settings.vector_store.* (检索参数)
+    - core/vector_store.py      → settings.vector_store.* (检索参数)
     - main.py                   → settings.host, settings.port (服务绑定)
 
   Java 对应:
@@ -69,7 +69,7 @@ class FileStorageSettings(BaseSettings):
 
 
 class VectorStoreSettings(BaseSettings):
-    """向量存储配置 — 被 services/hybrid_search.py 使用
+    """向量存储配置 — 被 core/vector_store.py 和 knowledge_service.py 使用
 
     table_topk_limit / table_similarity_threshold: 表召回专用 (更宽松)
     default_topk_limit / default_similarity_threshold: 知识召回通用
