@@ -158,10 +158,19 @@ class SqlGenerateNode(WorkflowNode):
     def format_sse(self, output: Dict[str, Any]) -> SSEPayload | None:
         sql = output.get("generated_sql", "")
         if sql:
+            # [旧代码] 不声明 Agent/Tool
+            # return SSEPayload(
+            #     text=sql,
+            #     text_type="SQL",
+            #     metrics_delta={"sql_generated": True},
+            # )
+            # V3.0: 声明 Analyst 归属 + text_to_sql tool
             return SSEPayload(
                 text=sql,
                 text_type="SQL",
                 metrics_delta={"sql_generated": True},
+                agent_name="Analyst", tool_name="text_to_sql",
+                tool_status="done",
             )
         return None
 

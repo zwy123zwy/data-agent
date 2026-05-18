@@ -106,10 +106,18 @@ class FeasibilityNode(WorkflowNode):
                 text = f"正在评估查询可行性...不可行: {reason}"
         else:
             text = "正在评估查询可行性..."
+        # [旧代码] 不声明 Agent/Tool
+        # return SSEPayload(
+        #     text=text,
+        #     text_type="TEXT",
+        #     metrics_delta={"feasibility_pass": feasible if isinstance(result, dict) else None},
+        # )
+        # V3.0: 声明 Explorer 归属 (可行性评估为前置节点，无 tool_name)
         return SSEPayload(
             text=text,
             text_type="TEXT",
             metrics_delta={"feasibility_pass": feasible if isinstance(result, dict) else None},
+            agent_name="Explorer",
         )
 
 

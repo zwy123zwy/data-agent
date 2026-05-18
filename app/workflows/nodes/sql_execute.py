@@ -177,16 +177,34 @@ class SqlExecuteNode(WorkflowNode):
         error = output.get("sql_error")
         result_data = output.get("sql_result")
         if error:
+            # [旧代码] 不声明 Agent/Tool
+            # return SSEPayload(
+            #     text=f"SQL 执行错误: {error}",
+            #     text_type="TEXT",
+            #     metrics_delta={"sql_executed": True, "sql_success": False},
+            # )
+            # V3.0: 声明 Analyst 归属 + execute_sql tool (error)
             return SSEPayload(
                 text=f"SQL 执行错误: {error}",
                 text_type="TEXT",
                 metrics_delta={"sql_executed": True, "sql_success": False},
+                agent_name="Analyst", tool_name="execute_sql",
+                tool_status="error", tool_summary=f"SQL 执行错误: {error[:50]}",
             )
         if result_data is not None:
+            # [旧代码] 不声明 Agent/Tool
+            # return SSEPayload(
+            #     text=json.dumps(result_data, ensure_ascii=False),
+            #     text_type="RESULT_SET",
+            #     metrics_delta={"sql_executed": True, "sql_success": True},
+            # )
+            # V3.0: 声明 Analyst 归属 + execute_sql tool (done)
             return SSEPayload(
                 text=json.dumps(result_data, ensure_ascii=False),
                 text_type="RESULT_SET",
                 metrics_delta={"sql_executed": True, "sql_success": True},
+                agent_name="Analyst", tool_name="execute_sql",
+                tool_status="done",
             )
         return None
 

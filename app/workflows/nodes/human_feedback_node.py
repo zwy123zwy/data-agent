@@ -137,9 +137,16 @@ class HumanFeedbackNode(WorkflowNode):
         # HumanFeedback 的 SSE 输出在 controller 中有特殊处理（interrupt 检测），
         # 这里提供默认输出作为 fallback
         if output.get("type") == "human_feedback":
+            # [旧代码] 不声明 Agent/Tool
+            # return SSEPayload(
+            #     text=json.dumps(output, ensure_ascii=False),
+            #     text_type="JSON",
+            # )
+            # V3.0: 声明 Explorer 归属 (人工确认属于 Explorer 阶段)
             return SSEPayload(
                 text=json.dumps(output, ensure_ascii=False),
                 text_type="JSON",
+                agent_name="Explorer",
             )
         return None
 

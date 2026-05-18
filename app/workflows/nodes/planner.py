@@ -233,10 +233,18 @@ class PlannerNode(WorkflowNode):
             text = f"正在制定执行计划...共 {step_count} 个步骤" if step_count else "正在制定执行计划..."
         except (json.JSONDecodeError, TypeError):
             text = "正在制定执行计划..."
+        # [旧代码] 不声明 Agent/Tool
+        # return SSEPayload(
+        #     text=text,
+        #     text_type="TEXT",
+        #     metrics_delta={"plan_steps": step_count if 'step_count' in dir() else 0},
+        # )
+        # V3.0: 声明 Explorer 归属 (执行计划制定为 Explorer 阶段节点)
         return SSEPayload(
             text=text,
             text_type="TEXT",
             metrics_delta={"plan_steps": step_count if 'step_count' in dir() else 0},
+            agent_name="Explorer",
         )
 
 

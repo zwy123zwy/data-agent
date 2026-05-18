@@ -353,22 +353,49 @@ class ReportGeneratorNode(WorkflowNode):
         report = output.get("report", "")
         markdown_report = output.get("markdown_report", "")
         if html_report:
+            # [旧代码] 不声明 Agent/Tool
+            # return SSEPayload(
+            #     text=html_report,
+            #     text_type="HTML",
+            #     metrics_delta={"report_generated": True},
+            # )
+            # V3.0: 声明 Reporter 归属 (最终报告，无需 tool_name)
             return SSEPayload(
                 text=html_report,
                 text_type="HTML",
                 metrics_delta={"report_generated": True},
+                agent_name="Reporter",
+                tool_status="done", tool_summary="报告生成完成",
             )
         elif markdown_report:
+            # [旧代码] 不声明 Agent/Tool
+            # return SSEPayload(
+            #     text=markdown_report,
+            #     text_type="MARK_DOWN",
+            #     metrics_delta={"report_generated": True},
+            # )
+            # V3.0: 声明 Reporter 归属
             return SSEPayload(
                 text=markdown_report,
                 text_type="MARK_DOWN",
                 metrics_delta={"report_generated": True},
+                agent_name="Reporter",
+                tool_status="done", tool_summary="报告生成完成",
             )
         elif report:
+            # [旧代码] 不声明 Agent/Tool
+            # return SSEPayload(
+            #     text=report,
+            #     text_type="MARK_DOWN",
+            #     metrics_delta={"report_generated": True},
+            # )
+            # V3.0: 声明 Reporter 归属
             return SSEPayload(
                 text=report,
                 text_type="MARK_DOWN",
                 metrics_delta={"report_generated": True},
+                agent_name="Reporter",
+                tool_status="done", tool_summary="报告生成完成",
             )
         return None
 

@@ -235,10 +235,18 @@ class IntentRecognitionNode(WorkflowNode):
         else:
             text = f"正在进行意图识别...\n意图识别完成！"
 
+        # [旧代码] 不声明 Agent/Tool
+        # return SSEPayload(
+        #     text=text,
+        #     text_type="TEXT",
+        #     metrics_delta={"intent_classification": intent},
+        # )
+        # V3.0: 声明 Explorer 归属 (意图识别为前置节点，无 tool_name)
         return SSEPayload(
             text=text,
             text_type="TEXT",
             metrics_delta={"intent_classification": intent},
+            agent_name="Explorer",
         )
 
 

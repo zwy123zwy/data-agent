@@ -207,10 +207,17 @@ class TableRelationNode(WorkflowNode):
             text = f"正在分析表关系...{table_count} 张表, {rel_count} 条关系"
         else:
             text = "正在分析表关系..."
+        # [旧代码] 不声明 Agent/Tool
+        # return SSEPayload(
+        #     text=text, text_type="TEXT",
+        #     metrics_delta={"table_count": table_count if isinstance(schema_info, dict) else 0},
+        # )
+        # V3.0: 声明 Explorer 归属 + find_relations tool
         return SSEPayload(
-            text=text,
-            text_type="TEXT",
+            text=text, text_type="TEXT",
             metrics_delta={"table_count": table_count if isinstance(schema_info, dict) else 0},
+            agent_name="Explorer", tool_name="find_relations",
+            tool_status="done", tool_summary=f"{rel_count} 条关系" if rel_count > 0 else "无关联",
         )
 
 

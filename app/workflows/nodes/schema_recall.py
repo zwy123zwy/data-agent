@@ -61,24 +61,42 @@ class SchemaRecallNode(WorkflowNode):
             return {"error": f"Schema recall failed: {str(e)}"}
 
     def format_sse(self, output: Dict[str, Any]) -> SSEPayload | None:
+        # [旧代码] 不声明 Agent/Tool
         # 无数据源 → 明确告知用户，不继续走数据分析链路
         if output.get("_no_datasource"):
+            # return SSEPayload(
+            #     text="当前 Agent 没有配置数据源，请先在 Agent 设置中绑定一个数据库。",
+            #     text_type="TEXT",
+            # )
             return SSEPayload(
                 text="当前 Agent 没有配置数据源，请先在 Agent 设置中绑定一个数据库。",
                 text_type="TEXT",
+                agent_name="Explorer", tool_name="get_schema",
+                tool_status="error", tool_summary="无数据源",
             )
         # 召回异常 → 告知用户并提供错误信息
         if output.get("error") and not output.get("schema_info"):
+            # return SSEPayload(
+            #     text=f"数据库 Schema 加载失败：{output['error']}",
+            #     text_type="TEXT",
+            # )
             return SSEPayload(
                 text=f"数据库 Schema 加载失败：{output['error']}",
                 text_type="TEXT",
+                agent_name="Explorer", tool_name="get_schema",
+                tool_status="error", tool_summary="Schema 加载失败",
             )
         # 正常召回 → 报告发现的表数量
         schema_info = output.get("schema_info", {})
         tables = schema_info.get("tables", []) if isinstance(schema_info, dict) else []
         table_count = len(tables)
         text = f"正在加载数据库表结构...找到 {table_count} 张表" if table_count else "正在加载数据库表结构..."
-        return SSEPayload(text=text, text_type="TEXT")
+        # return SSEPayload(text=text, text_type="TEXT")
+        return SSEPayload(
+            text=text, text_type="TEXT",
+            agent_name="Explorer", tool_name="get_schema",
+            tool_status="done", tool_summary=f"找到 {table_count} 张表",
+        )
 
 
 # LangGraph 兼容实例

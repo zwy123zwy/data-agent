@@ -97,10 +97,19 @@ class SemanticConsistencyNode(WorkflowNode):
 
     def format_sse(self, output: Dict[str, Any]) -> SSEPayload:
         passed = output.get("semantic_consistency_result", False)
+        # [旧代码] 不声明 Agent/Tool
+        # return SSEPayload(
+        #     text="正在校验 SQL 语义...\u2713 通过" if passed else "正在校验 SQL 语义...\u26a0 未通过",
+        #     text_type="TEXT",
+        #     metrics_delta={"sql_semantic_pass": passed},
+        # )
+        # V3.0: 声明 Analyst 归属 + semantic_check tool
         return SSEPayload(
             text="正在校验 SQL 语义...\u2713 通过" if passed else "正在校验 SQL 语义...\u26a0 未通过",
             text_type="TEXT",
             metrics_delta={"sql_semantic_pass": passed},
+            agent_name="Analyst", tool_name="semantic_check",
+            tool_status="done",
         )
 
 

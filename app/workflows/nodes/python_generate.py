@@ -164,7 +164,14 @@ class PythonGenerateNode(WorkflowNode):
     def format_sse(self, output: Dict[str, Any]) -> SSEPayload | None:
         code = output.get("python_code", "")
         if code:
-            return SSEPayload(text=code, text_type="PYTHON")
+            # [旧代码] 不声明 Agent/Tool
+            # return SSEPayload(text=code, text_type="PYTHON")
+            # V3.0: 声明 Analyst 归属 + text_to_python tool
+            return SSEPayload(
+                text=code, text_type="PYTHON",
+                agent_name="Analyst", tool_name="text_to_python",
+                tool_status="done",
+            )
         return None
 
 

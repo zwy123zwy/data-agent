@@ -178,7 +178,13 @@ class PlanExecutorNode(WorkflowNode):
             text = f"正在执行步骤 {current_step}..."
         else:
             text = "正在执行计划..."
-        return SSEPayload(text=text, text_type="TEXT")
+        # [旧代码] 不声明 Agent/Tool
+        # return SSEPayload(text=text, text_type="TEXT")
+        # V3.0: 声明 Explorer 归属 (调度器为 Explorer 阶段节点)
+        return SSEPayload(
+            text=text, text_type="TEXT",
+            agent_name="Explorer",
+        )
 
 
 def _validation_failed(state: WorkflowState, error: str) -> Dict[str, Any]:

@@ -57,7 +57,13 @@ class ChitchatNode(WorkflowNode):
     def format_sse(self, output: Dict[str, Any]) -> SSEPayload | None:
         text = output.get("chitchat_response", "")
         if text:
-            return SSEPayload(text=text, text_type="TEXT")
+            # [旧代码] 不声明 Agent/Tool
+            # return SSEPayload(text=text, text_type="TEXT")
+            # V3.0: 声明 Explorer 归属 (闲聊回复为终端节点)
+            return SSEPayload(
+                text=text, text_type="TEXT",
+                agent_name="Explorer",
+            )
         return None
 
 

@@ -98,9 +98,17 @@ class PythonAnalyzeNode(WorkflowNode):
             return {"python_analysis": f"分析失败: {str(e)}"}
 
     def format_sse(self, output: Dict[str, Any]) -> SSEPayload:
+        # [旧代码] 不声明 Agent/Tool
+        # return SSEPayload(
+        #     text=output.get("python_analysis", "") or "",
+        #     text_type="TEXT",
+        # )
+        # V3.0: 声明 Analyst 归属 + analyze_result tool
         return SSEPayload(
             text=output.get("python_analysis", "") or "",
             text_type="TEXT",
+            agent_name="Analyst", tool_name="analyze_result",
+            tool_status="done",
         )
 
 

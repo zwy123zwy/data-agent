@@ -63,12 +63,22 @@ class QueryRewriteNode(WorkflowNode):
 
     def format_sse(self, output: Dict[str, Any]) -> SSEPayload:
         rewritten = output.get("rewritten_query", "")
+        # [旧代码] 不声明 Agent/Tool
+        # if rewritten:
+        #     return SSEPayload(text=f"正在优化查询...\n{rewritten}", text_type="TEXT")
+        # return SSEPayload(text="正在优化查询...(使用原始查询)", text_type="TEXT")
+        # V3.0: 声明 Explorer 归属 + rewrite_query tool
         if rewritten:
             return SSEPayload(
-                text=f"正在优化查询...\n{rewritten}",
-                text_type="TEXT",
+                text=f"正在优化查询...\n{rewritten}", text_type="TEXT",
+                agent_name="Explorer", tool_name="rewrite_query",
+                tool_status="done",
             )
-        return SSEPayload(text="正在优化查询...(使用原始查询)", text_type="TEXT")
+        return SSEPayload(
+            text="正在优化查询...(使用原始查询)", text_type="TEXT",
+            agent_name="Explorer", tool_name="rewrite_query",
+            tool_status="done",
+        )
 
 
 # LangGraph 兼容实例

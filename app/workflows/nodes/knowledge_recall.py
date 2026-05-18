@@ -220,7 +220,15 @@ class KnowledgeRecallNode(WorkflowNode):
             text = f"正在检索相关知识...\n{recalled[:500]}"
         else:
             text = "正在检索相关知识...未找到证据文档"
-        return SSEPayload(text=text, text_type="TEXT", metrics_delta={"knowledge_count": count})
+        # [旧代码] 不声明 Agent/Tool
+        # return SSEPayload(text=text, text_type="TEXT", metrics_delta={"knowledge_count": count})
+        # V3.0: 声明 Explorer 归属 + search_knowledge tool
+        return SSEPayload(
+            text=text, text_type="TEXT",
+            metrics_delta={"knowledge_count": count},
+            agent_name="Explorer", tool_name="search_knowledge",
+            tool_status="done", tool_summary=f"召回 {count} 条知识",
+        )
 
 
 # LangGraph 兼容实例

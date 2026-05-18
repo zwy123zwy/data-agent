@@ -99,16 +99,34 @@ class PythonExecuteNode(WorkflowNode):
     def format_sse(self, output: Dict[str, Any]) -> SSEPayload:
         is_success = output.get("python_is_success", False)
         if is_success:
+            # [旧代码] 不声明 Agent/Tool
+            # return SSEPayload(
+            #     text="Python 代码执行成功",
+            #     text_type="TEXT",
+            #     metrics_delta={"python_executed": True, "python_success": True},
+            # )
+            # V3.0: 声明 Analyst 归属 + run_python tool (done)
             return SSEPayload(
                 text="Python 代码执行成功",
                 text_type="TEXT",
                 metrics_delta={"python_executed": True, "python_success": True},
+                agent_name="Analyst", tool_name="run_python",
+                tool_status="done",
             )
         error = output.get("python_error", "")
+        # [旧代码] 不声明 Agent/Tool
+        # return SSEPayload(
+        #     text=f"Python 代码执行失败: {error[:200]}" if error else "Python 代码执行中...",
+        #     text_type="TEXT",
+        #     metrics_delta={"python_executed": True, "python_success": False},
+        # )
+        # V3.0: 声明 Analyst 归属 + run_python tool (error)
         return SSEPayload(
             text=f"Python 代码执行失败: {error[:200]}" if error else "Python 代码执行中...",
             text_type="TEXT",
             metrics_delta={"python_executed": True, "python_success": False},
+            agent_name="Analyst", tool_name="run_python",
+            tool_status="error", tool_summary=f"Python 执行失败: {error[:50]}" if error else "Python 执行中",
         )
 
 
