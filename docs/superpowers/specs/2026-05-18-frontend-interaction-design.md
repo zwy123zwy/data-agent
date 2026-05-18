@@ -1,8 +1,10 @@
 # Frontend Interaction Design — 多 Agent 执行可视化
 
 **日期**: 2026-05-18  
-**状态**: DRAFT  
+**状态**: DRAFT (审计修订 V1.1)  
 **关联**: `2026-05-18-multi-agent-architecture-design.md` (后端架构 V3.0)
+
+> **版本说明**: 本文档设计目标态（后端 V3.0 — Explorer/Analyst/Reporter 三 Agent ReAct）。当前后端为 V2.0（16 节点固定流水线），§7 提供了 V2.0 降级映射表。SSE 协议字段统一使用当前后端实际发送的名称（Java CamelCase `*Node` 后缀）。
 
 ---
 
@@ -10,9 +12,10 @@
 
 将多 Agent 协作过程（Explorer → Analyst → Reporter）以「思考气泡 + 侧边执行面板」形式在前端可视化：
 
-- **对话区**: 用户提问 → 🧠 思考气泡（单例，内容随 Agent 切换刷新）→ 🤖 AI 回复气泡
+- **对话区**: 用户提问 → 🧠 思考气泡（单例，内容随节点切换刷新）→ 🤖 AI 回复气泡
 - **执行面板**: 右侧抽屉，执行开始时自动滑入，以 Round 为单位展示每个 Agent 的 tool 调用时序
 - **参考**: 字节跳动 DataAgent 3.0 交互模式
+- **兼容**: 当前后端 V2.0 16 节点模式通过 §7 映射表降级运行
 
 ---
 
@@ -102,21 +105,34 @@ AgentRun (page)
 
 ### 文案映射
 
-| 当前阶段 | thinkingText |
-|----------|-------------|
-| KnowledgeRecall | 正在召回业务知识… |
-| SchemaRecall | 正在探查数据表结构… |
-| QueryRewrite | 正在改写查询… |
-| TableRelation | 正在分析表关联关系… |
-| Feasibility / Planner | 正在制定执行计划… |
-| SqlGenerate | 正在生成 SQL 查询… |
-| SqlExecute | 正在执行 SQL 查询… |
-| SemanticConsistency | 正在校验语义一致性… |
-| PythonGenerate | 正在生成分析代码… |
-| PythonExecute | 正在执行 Python 分析… |
-| PythonAnalyze | 正在解读分析结果… |
-| ReportGenerator | 正在生成分析报告… |
-| HumanFeedback | 等待人工确认… |
+`thinkingText` 由 SSE `nodeName` 字段驱动（后端发送 Java CamelCase 名称）。同一 Agent 下多个节点共享相同文案，`thinkingHint`（副文案）由当前 tool 名动态拼接。
+
+| SSE nodeName (实际值) | Agent Round | thinkingText |
+|----------------------|-------------|-------------|
+| `EvidenceRecallNode` | Explorer | 正在召回业务知识… |
+| `SchemaRecallNode` | Explorer | 正在探查数据表结构… |
+| `QueryEnhanceNode` | Explorer | 正在改写查询… |
+| `TableRelationNode` | Explorer | 正在分析表关联关系… |
+| `FeasibilityAssessmentNode` | — | 正在制定执行计划… |
+| `PlannerNode` | — | 正在制定执行计划… |
+| `SqlGenerateNode` | Analyst | 正在生成 SQL 查询… |
+| `SemanticConsistencyNode` | Analyst | 正在校验语义一致性… |
+| `SqlExecuteNode` | Analyst | 正在执行 SQL 查询… |
+| `PythonGenerateNode` | Analyst | 正在生成分析代码… |
+| `PythonExecuteNode` | Analyst | 正在执行 Python 分析… |
+| `PythonAnalyzeNode` | Analyst | 正在解读分析结果… |
+| `ReportGeneratorNode` | Reporter | 正在生成分析报告… |
+| `HumanFeedbackNode` | — | 等待人工确认… |
+| `ChitchatNode` | — | (不展示思考气泡) |
+
+#### 重试文案
+
+SQL 生成/执行可能重试（最多 10 次），重试时 `thinkingHint` 显示当前尝试次数：
+
+```
+🧠 正在生成 SQL 查询…
+   第 3 次尝试…
+```
 
 ### UI 样式
 
@@ -141,13 +157,22 @@ AgentRun (page)
 
 ### 生命周期
 
-- **滑入**: `drawerVisible` 由 `KnowledgeRecall` 或 `SchemaRecall` 节点的首个 sse_output 触发 → `setDrawerVisible(true)`
+- **滑入**: `drawerVisible` 由 `EvidenceRecallNode` 或 `SchemaRecallNode` 的首个 SSE 消息触发 → `setDrawerVisible(true)`
 - **关闭**: 仅用户点击 ✕ 按钮 → `setDrawerVisible(false)`
 - **不自动关闭**: 执行结束后抽屉保持可见，内容置灰提示「执行完成」，下次执行重新点亮
+- **chitchat**: 不打开抽屉，不产生 Round
 
 ### 面板内容 — AgentRound 分组规则
 
-每个 **ReAct Agent 执行周期** 对应一个 Round：
+**V3.0 目标**: 每个 ReAct Agent 执行周期对应一个 Round。
+
+**V2.0 兼容**: 当前 16 个线性节点按职责聚合为 3 个 Round：
+
+- **Round 1 · Explorer**: `EvidenceRecallNode` → `SchemaRecallNode` → `QueryEnhanceNode` → `TableRelationNode`（探查数据 + 召回知识 + 改写查询 + 表关联），结束于 `PlannerNode` 执行前
+- **Round 2 · Analyst**: `SqlGenerateNode` → `SemanticConsistencyNode` → `SqlExecuteNode` → `PythonGenerateNode` → `PythonExecuteNode` → `PythonAnalyzeNode`（SQL/Python 生成与执行），结束时标记 done
+- **Round 3 · Reporter**: `ReportGeneratorNode`（生成报告）
+
+`PlanExecutorNode` 和 `FeasibilityAssessmentNode`、`PlannerNode` 作为编排节点，不产生 tool 条目，但 `PlannerNode` 触发 Explorer → Analyst 的 Round 切换。
 
 ```
 Round 1 · Explorer    ● 已完成 (绿色)
@@ -169,9 +194,29 @@ Round 3 · Reporter     ○ 待执行 (灰色)
 |------|------|--------|
 | 完成 | `#52c41a` (绿) | ✓ |
 | 执行中 | `var(--accent)` (蓝) | ⟳ 脉冲动画 |
-| 失败 | `#ff4d4f` (红) | ✕ |
+| 失败 | `#ff4d4f` (红) | ✕ + tool 摘要显示错误信息 |
 | 待执行 | `var(--border)` (灰) | ○ |
 | 跳过 | `var(--text-secondary)` | — |
+
+### 异常状态处理
+
+#### Tool 失败
+- 对应 ToolItem 标记为红色 ✕，显示错误摘要（如 `execute_sql ✕ 语法错误: near "SELECTT"`）
+- Round 状态变为「部分失败」(黄色 `#faad14`)
+- 流程可能进入重试 → 新的 tool 条目追加到同一 Round
+- 多次重试失败后流程终止 → Round 保持红色
+
+#### SSE 断连重连
+- 断连期间产生的 Round/Tool 状态无法恢复（SSE 是单向流）
+- 重连后如果执行仍在继续（`event: complete` 未收到），抽屉保持上次状态，后续 SSE 事件继续追加
+- 如果已收到 `event: complete` 或 `event: error`，抽屉显示最终状态
+
+#### 用户停止 (StopButton)
+- `EventSource.close()` → SSE 连接断开
+- 正在 `running` 的 ToolItem 标记为 `skipped`（灰色 `—`）
+- 正在 `running` 的 Round 标记为 `skipped`
+- 抽屉保持可见（用户可回顾已执行步骤）
+- 思考气泡立即消失
 
 ### 节点交互
 
@@ -237,16 +282,35 @@ interface ExecutionState {
   thinkingText: string
   thinkingHint: string
   setThinking: (text: string, hint?: string) => void
+  setThinkingHint: (hint: string) => void
   clearThinking: () => void
 
-  // 重置
-  reset: () => void
+  // Tool 完成追踪
+  lastAgentName: string | null
+  finishLastToolCall: (agentName: string) => void
+
+  // 停止/重置
+  stop: () => void          // 停止按钮触发 — 标记 running → skipped, 清除 thinking
+  reset: () => void         // 新请求开始前重置所有状态
 }
 
-interface ThinkingState {
-  text: string            // 主文案, "" = 隐藏
-  hint: string            // 副文案 (如 "调用 get_schema → 获取到 5 张表")
-  visible: boolean
+`stop()` 实现逻辑:
+
+```typescript
+stop: () => {
+  // 将所有 running 状态的 tool 标记为 skipped
+  set((state) => ({
+    rounds: state.rounds.map((round) => ({
+      ...round,
+      status: round.status === 'running' ? 'skipped' : round.status,
+      tools: round.tools.map((tool) => ({
+        ...tool,
+        status: tool.status === 'running' ? 'skipped' : tool.status,
+      })),
+    })),
+    thinkingText: '',
+    thinkingHint: '',
+  }))
 }
 ```
 
@@ -254,61 +318,105 @@ interface ThinkingState {
 
 ```typescript
 // handleSSEMessage 中的映射逻辑
+// 注意: nodeName 是后端 NODE_NAME_MAP 映射后的 Java CamelCase 名称
+// 详见 streaming_graph_controller.py NODE_NAME_MAP
+
 switch (payload.nodeName) {
-  case 'KnowledgeRecall':
+  // ===== Round 1: Explorer (探查 + 召回 + 改写 + 关联) =====
+  case 'EvidenceRecallNode':
     execStore.openDrawer()
     execStore.setThinking('正在召回业务知识…')
     execStore.upsertRound('Explorer', 1)
+    execStore.addToolCall('Explorer', { name: 'search_knowledge', status: 'running' })
     break
 
-  case 'SchemaRecall':
+  case 'SchemaRecallNode':
     execStore.setThinking('正在探查数据表结构…')
     execStore.addToolCall('Explorer', { name: 'get_schema', status: 'running' })
     break
 
-  case 'QueryRewrite':
+  case 'QueryEnhanceNode':
+    execStore.setThinking('正在改写查询…')
     execStore.addToolCall('Explorer', { name: 'rewrite_query', status: 'running' })
     break
 
-  case 'TableRelation':
+  case 'TableRelationNode':
+    execStore.setThinking('正在分析表关联关系…')
     execStore.addToolCall('Explorer', { name: 'find_relations', status: 'running' })
-    // 标记 Explorer round 完成
-    execStore.updateRoundStatus('Explorer', 'done')
     break
 
-  case 'SqlGenerate':
+  // ===== 编排节点 (不产生 tool 条目) =====
+  case 'FeasibilityAssessmentNode':
+  case 'PlannerNode':
+    execStore.setThinking('正在制定执行计划…')
+    // PlannerNode 完成后 → 标记 Explorer round done, 准备 Analyst round
+    break
+
+  // ===== 循环调度器 (不产生 tool 条目) =====
+  case 'PlanExecutorNode':
+    // 每次出现代表新一轮 step 分发, 不更新 UI
+    break
+
+  // ===== Round 2: Analyst (SQL/Python 生成与执行) =====
+  case 'SqlGenerateNode':
     execStore.setThinking('正在生成 SQL 查询…')
     execStore.upsertRound('Analyst', 2)
     execStore.addToolCall('Analyst', { name: 'text_to_sql', status: 'running' })
     break
 
-  case 'SqlExecute':
+  case 'SemanticConsistencyNode':
+    execStore.setThinking('正在校验语义一致性…')
+    execStore.addToolCall('Analyst', { name: 'semantic_check', status: 'running' })
+    break
+
+  case 'SqlExecuteNode':
+    execStore.setThinking('正在执行 SQL 查询…')
     execStore.addToolCall('Analyst', { name: 'execute_sql', status: 'running' })
     break
 
-  case 'PythonGenerate':
+  case 'PythonGenerateNode':
+    execStore.setThinking('正在生成分析代码…')
     execStore.addToolCall('Analyst', { name: 'text_to_python', status: 'running' })
     break
 
-  case 'PythonExecute':
+  case 'PythonExecuteNode':
+    execStore.setThinking('正在执行 Python 分析…')
     execStore.addToolCall('Analyst', { name: 'run_python', status: 'running' })
     break
 
-  case 'ReportGenerator':
+  case 'PythonAnalyzeNode':
+    execStore.setThinking('正在解读分析结果…')
+    execStore.addToolCall('Analyst', { name: 'analyze_result', status: 'running' })
+    break
+
+  // ===== Round 3: Reporter =====
+  case 'ReportGeneratorNode':
     execStore.setThinking('正在生成分析报告…')
     execStore.upsertRound('Reporter', 3)
     execStore.updateRoundStatus('Analyst', 'done')
     break
 
-  // ... 每个 node 完成后更新对应 tool status 为 'done'
+  // ===== Human Feedback =====
+  case 'HumanFeedbackNode':
+    execStore.setThinking('等待人工确认…')
+    // 输入区出现确认/拒绝按钮, 抽屉暂停动画
+    break
+
+  // ===== Chitchat: 不展示任何执行过程 =====
+  case 'ChitchatNode':
+    // 不打开抽屉, 不展示思考气泡
+    break
 }
 
-// 当后端返回 textType === 'tool_result' 时更新 tool 状态
-if (payload.textType === 'tool_result') {
-  execStore.updateToolCall(agentName, toolId, {
-    status: 'done',
-    summary: extractSummary(payload.text),
-  })
+// 每个 node SSE 消息的 complete 字段为 true 时 → 更新对应 tool 状态为 'done'
+if (payload.complete) {
+  execStore.finishLastToolCall(lastAgentName)
+}
+
+// 当 textType 指示 tool 结果时更新摘要
+if (payload.textType === 'TEXT' && !payload.complete) {
+  // 普通进度文本, 可提取为 thinkingHint
+  execStore.setThinkingHint(extractSummary(payload.text))
 }
 ```
 
@@ -316,56 +424,97 @@ if (payload.textType === 'tool_result') {
 
 ## 7. SSE 事件 → UI 映射表
 
-| 后端 nodeName | 思考气泡 | 执行面板 |
-|--------------|---------|---------|
-| IntentRecognition | — (内部判断) | — |
-| (chitchat) | — | 不打开抽屉 |
-| KnowledgeRecall | 🧠 正在召回业务知识… | 打开抽屉, +Round 1 Explorer |
-| SchemaRecall | 🧠 正在探查数据表结构… | +tool: get_schema |
-| QueryRewrite | 🧠 正在改写查询… | +tool: rewrite_query |
-| TableRelation | 🧠 正在分析表关联关系… | +tool: find_relations |
-| Feasibility | 🧠 正在制定执行计划… | — |
-| Planner | 🧠 正在制定执行计划… | — |
-| SqlGenerate | 🧠 正在生成 SQL 查询… | +Round 2 Analyst, +tool: text_to_sql |
-| SemanticConsistency | 🧠 正在校验语义一致性… | +tool: semantic_check |
-| SqlExecute | 🧠 正在执行 SQL 查询… | +tool: execute_sql |
-| PythonGenerate | 🧠 正在生成分析代码… | +tool: text_to_python |
-| PythonExecute | 🧠 正在执行 Python 分析… | +tool: run_python |
-| PythonAnalyze | 🧠 正在解读分析结果… | +tool: analyze_result |
-| ReportGenerator | 🧠 正在生成分析报告… | +Round 3 Reporter |
-| HumanFeedback (interrupt) | ⏸️ 等待人工确认… | 抽屉暂停动画, 输入区出现确认/拒绝按钮 |
-| END | 淡出消失 (AI 回复出现后 1s) | 抽屉保持, 执行状态置灰 |
+### 7.1 V2.0 当前态（16 节点 → 3 Round 降级映射）
 
-### 需要后端适配的 SSE 字段
+前端不区分 V2.0/V3.0——统一按 `nodeName` + `agentName`（可选字段）驱动 UI。
 
-当前 SSE 协议输出 `nodeName` + `textType` + `text`。为支持执行面板精细化展示，建议在 SSE payload 中新增可选字段:
+| SSE nodeName (实际值) | 思考气泡 | 执行面板 |
+|----------------------|---------|---------|
+| `IntentRecognitionNode` | — (内部判断) | — |
+| `ChitchatNode` | — | 不打开抽屉 |
+| `EvidenceRecallNode` | 🧠 正在召回业务知识… | 打开抽屉, +Round 1 Explorer, +tool: search_knowledge |
+| `SchemaRecallNode` | 🧠 正在探查数据表结构… | +tool: get_schema |
+| `QueryEnhanceNode` | 🧠 正在改写查询… | +tool: rewrite_query |
+| `TableRelationNode` | 🧠 正在分析表关联关系… | +tool: find_relations |
+| `FeasibilityAssessmentNode` | 🧠 正在制定执行计划… | — |
+| `PlannerNode` | 🧠 正在制定执行计划… | Explorer round → done (切换到 Analyst) |
+| `PlanExecutorNode` | — | — (编排节点, 不产生 UI 变化) |
+| `SqlGenerateNode` | 🧠 正在生成 SQL 查询… | +Round 2 Analyst, +tool: text_to_sql |
+| `SemanticConsistencyNode` | 🧠 正在校验语义一致性… | +tool: semantic_check |
+| `SqlExecuteNode` | 🧠 正在执行 SQL 查询… | +tool: execute_sql |
+| `PythonGenerateNode` | 🧠 正在生成分析代码… | +tool: text_to_python |
+| `PythonExecuteNode` | 🧠 正在执行 Python 分析… | +tool: run_python |
+| `PythonAnalyzeNode` | 🧠 正在解读分析结果… | +tool: analyze_result |
+| `ReportGeneratorNode` | 🧠 正在生成分析报告… | +Round 3 Reporter, Analyst round → done |
+| `HumanFeedbackNode` (interrupt) | ⏸️ 等待人工确认… | 抽屉暂停动画, 输入区出现确认/拒绝按钮 |
+| `event: complete` | 淡出消失 (AI 回复出现后 1s) | 抽屉保持, 执行状态置灰 |
+| `event: error` | 显示错误提示 | 抽屉保留, 失败 Round 变红 |
+| `event: paused` | 更新为等待确认 | 暂停状态显示 |
+
+### 7.2 V3.0 目标态 (Explorer/Analyst/Reporter Agent 原生支持)
+
+当后端升级到 V3.0 ReAct Agent 架构后，SSE payload 将包含 `agentName` + `toolName` 字段，前端直接映射：
 
 ```json
 {
-  "nodeName": "SchemaRecall",
-  "textType": "tool_call",
+  "agentId": "1",
+  "threadId": "uuid",
+  "nodeName": "Explorer",
+  "textType": "TEXT",
   "text": "正在获取数据表结构...",
-  "agentName": "Explorer",        // NEW: 所属 Agent
-  "toolName": "get_schema",       // NEW: 当前 tool 名称
-  "toolStatus": "running",        // NEW: pending / running / done / error
-  "toolSummary": "发现 5 张表"    // NEW: tool 结果摘要
+  "agentName": "Explorer",
+  "toolName": "get_schema",
+  "toolStatus": "running",
+  "toolSummary": "发现 5 张表",
+  "error": false,
+  "complete": false
 }
 ```
 
-> 这些字段为 **可选** — 前端 graceful degrade: 无这些字段时仅更新思考气泡，不展示 tool 细节。
+此时前端 switch 可简化为由 `agentName` 驱动 Round 分组，`toolName` + `toolStatus` 直接驱动 ToolItem 增删改，无需硬编码 16 个 nodeName case。
+
+### 7.3 需要后端适配的 SSE 字段
+
+当前 SSE 协议输出 `nodeName` + `textType` + `text` + `error` + `complete`。为支持执行面板精细化展示，建议新增可选字段（V2.0 → V3.0 渐进升级）：
+
+```json
+{
+  "agentName": "Explorer",
+  "toolName": "get_schema",
+  "toolStatus": "running",
+  "toolSummary": "发现 5 张表"
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `agentName` | string | 否 | 所属 Agent (Explorer/Analyst/Reporter)，V3.0 后必填 |
+| `toolName` | string | 否 | 当前 tool 名称 |
+| `toolStatus` | string | 否 | pending / running / done / error |
+| `toolSummary` | string | 否 | tool 结果摘要（单行，< 80 字符） |
+
+> **前端 graceful degrade**: 无这些字段时，通过 `nodeName` 查 §7.1 映射表确定 Round 归属和 tool 名称。
 
 ---
 
 ## 8. 实现分工
 
+### 前端
+
 | 层 | 负责 | 关键文件 |
 |---|------|---------|
-| 状态管理 | 新增 `executionStore` (Zustand) | `src/stores/executionStore.ts` |
-| SSE 解析 | 在现有 `streamRequest.ts` 中增加映射逻辑 | `src/utils/streamRequest.ts` |
-| 思考气泡 | 新增 `ThinkingBubble.tsx` | `src/components/run/ThinkingBubble.tsx` |
-| 执行抽屉 | 新增 `ExecutionDrawer.tsx` + `AgentRound.tsx` + `ToolItem.tsx` | `src/components/run/` |
-| 页面布局 | 重构 `AgentRun.tsx` 支持三区域 Flexbox | `src/views/AgentRun.tsx` |
-| 后端 SSE | 可选: 在 `streaming_graph_controller.py` 的 sse_output 中增加 `agentName`/`toolName` 字段 | `app/api/streaming_graph_controller.py` |
+| 状态管理 | 新增 `executionStore` (Zustand)，含 Round/Tool 管理 + 思考气泡 + stop/reset | `src/stores/executionStore.ts` |
+| SSE 解析 | 在现有 `streamRequest.ts` 中增加 §6 节点名映射逻辑 | `src/utils/streamRequest.ts` |
+| 思考气泡 | 新增 `ThinkingBubble.tsx`（单例模式，内容随 nodeName 刷新） | `src/components/run/ThinkingBubble.tsx` |
+| 执行抽屉 | 新增 `ExecutionDrawer.tsx` + `AgentRound.tsx` + `ToolItem.tsx` + 异常状态展示 | `src/components/run/` |
+| 页面布局 | 重构 `AgentRun.tsx` 支持三区域 Flexbox + StopButton 状态清理 | `src/views/AgentRun.tsx` |
+
+### 后端
+
+| 阶段 | 改造内容 | 关键文件 |
+|------|---------|---------|
+| **Phase 1 (V2.0)** | 前端通过 §7.1 映射表硬编码 16 个 nodeName → Round 归属。后端无需改动，当前 SSE 协议即可运行 | 无 |
+| **Phase 2 (V3.0)** | SSEPayload 新增 `agentName`/`toolName`/`toolStatus`/`toolSummary` 字段；各节点 `format_sse()` 声明所属 Agent；Controller `_build_graph_response` 透传新字段；`graph.py` PlanExecutor 可能需要 emit per-tool 中间事件 | `app/workflows/node_base.py`, `app/api/streaming_graph_controller.py`, `app/workflows/nodes/*.py` |
 
 ---
 
