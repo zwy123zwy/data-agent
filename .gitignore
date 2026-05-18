@@ -80,9 +80,8 @@ evaluation/databases/
 # Claude Code local settings (personal config)
 .claude/settings.local.json
 
-# Generated diagrams
-docs/*.svg
-docs/*
+# Project documentation (local only)
+docs/
 
 # Docker Compose overrides (personal)
 docker-compose.override.yml
