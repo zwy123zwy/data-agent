@@ -63,6 +63,7 @@ NODE_NAME_MAP = {
     "python_analyze": "PythonAnalyzeNode",
     "report_generator": "ReportGeneratorNode",
     "human_feedback": "HumanFeedbackNode",
+    "chitchat_node": "ChitchatNode",
 }
 
 # ★ 对用户可见的节点（其余为内部管线节点——RAG、Schema 回收等）
@@ -84,6 +85,7 @@ USER_VISIBLE_NODES = frozenset({
     "python_analyze",
     "report_generator",
     "human_feedback",
+    "chitchat_node",
 })
 
 # TextType 枚举 — 对齐 Java TextType enum 和前端 TextType enum

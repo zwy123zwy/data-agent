@@ -78,6 +78,7 @@ from .nodes.python_execute import python_execute_node
 from .nodes.python_analyze import python_analyze_node
 from .nodes.report_generator import report_generator_node
 from .nodes.human_feedback_node import human_feedback_node, route_after_human_feedback
+from .nodes.chitchat_node import chitchat_node
 from ..core.config import settings
 import logging
 
@@ -86,12 +87,14 @@ logger = logging.getLogger(__name__)
 
 # ========== 路由函数 ==========
 
-def route_after_intent(state: WorkflowState) -> Literal["knowledge_recall", "end"]:
-    """意图识别后路由 — 对齐 Java IntentRecognitionDispatcher"""
+def route_after_intent(state: WorkflowState) -> Literal["knowledge_recall", "chitchat_node", "end"]:
+    """意图识别后路由 — 对齐 Java IntentRecognitionDispatcher
+    chitchat → 走 LLM 对话回复而非直接 END
+    """
     intent = state.get("intent")
     if intent == "data_analysis":
         return "knowledge_recall"
-    return "end"
+    return "chitchat_node"
 
 
 def route_after_query_rewrite(state: WorkflowState) -> Literal["schema_recall", "end"]:
@@ -202,6 +205,7 @@ workflow.add_node("python_execute", python_execute_node)
 workflow.add_node("python_analyze", python_analyze_node)
 workflow.add_node("report_generator", report_generator_node)
 workflow.add_node("human_feedback", human_feedback_node)
+workflow.add_node("chitchat_node", chitchat_node)
 
 # 入口 — 所有请求都从意图识别开始
 workflow.set_entry_point("intent_recognition")
@@ -210,6 +214,7 @@ workflow.set_entry_point("intent_recognition")
 # Intent → (data_analysis) → Knowledge → QueryRewrite → Schema → TableRelation → Feasibility → Planner
 workflow.add_conditional_edges("intent_recognition", route_after_intent, {
     "knowledge_recall": "knowledge_recall",
+    "chitchat_node": "chitchat_node",
     "end": END,
 })
 workflow.add_edge("knowledge_recall", "query_rewrite")
@@ -284,6 +289,8 @@ workflow.add_conditional_edges("human_feedback", route_after_human_feedback, {
     "planner": "planner",              # 拒绝 → 重新规划
     "end": END,
 })
+# 闲聊 → END
+workflow.add_edge("chitchat_node", END)
 
 # 编译 — 将声明的拓扑编译为可执行的 LangGraph 状态图
 # ★ checkpointer 为 HumanFeedback interrupt/resume 提供状态持久化
