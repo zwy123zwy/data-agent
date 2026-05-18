@@ -68,7 +68,7 @@
 | **Modify** | `app/workflows/nodes/schema_recall.py` | format_sse() 添加 agentName="Explorer", toolName="get_schema" |
 | **Modify** | `app/workflows/nodes/sql_generate.py` | format_sse() 添加 agentName="Analyst", toolName="text_to_sql" |
 | **Modify** | `app/workflows/nodes/report_generator.py` | format_sse() 添加 agentName="Reporter" |
-| **Modify** | 其余 14 个节点的 format_sse() | 按 §7.1 映射表声明 agentName/toolName |
+| **Modify** | 其余 6 个编排节点的 format_sse() | 按需声明 agentName (无 tool_name) |
 
 ---
 
@@ -266,13 +266,23 @@ export const useExecutionStore = create<ExecutionState>()((set, get) => ({
     }));
   },
 
+  // 添加 tool 时自动完成同 Round 内上一 running tool
+  // 理由: V2.0 线性流水线中一个节点对应一个 tool, 新 tool 开始即上一 tool 完成
+  // data.complete 在 SSE data 消息中永远为 false (仅 event:complete 中为 true),
+  // 故 handleNodeForExecution 中的 complete 判断不可用, 在此处自动完成
   addToolCall: (agentName, tool) => {
     set((s) => ({
-      rounds: s.rounds.map((r) =>
-        r.agentName === agentName
-          ? { ...r, tools: [...r.tools, { ...tool, id: tool.id || nextToolId(), startedAt: Date.now() }] }
-          : r,
-      ),
+      rounds: s.rounds.map((r) => {
+        if (r.agentName !== agentName) return r;
+        // 自动完成上一 running tool
+        const completedTools = r.tools.map((t) =>
+          t.status === 'running' ? { ...t, status: 'done' as const, finishedAt: Date.now() } : t,
+        );
+        return {
+          ...r,
+          tools: [...completedTools, { ...tool, id: tool.id || nextToolId(), startedAt: Date.now() }],
+        };
+      }),
       lastAgentName: agentName,
     }));
   },
@@ -431,7 +441,7 @@ const NODE_TO_EXECUTION: Record<string, NodeExecutionMapping> = {
     thinkingText: '正在制定执行计划…', finishRound: 'Explorer',
   },
   PlanExecutorNode: {
-    thinkingText: '', // 不更新 UI
+    thinkingText: '正在执行步骤…', // plan_executor 产生可见输出, 与 nodeBlocks 保持一致
   },
   SqlGenerateNode: {
     agentName: 'Analyst', roundIndex: 2, toolName: 'text_to_sql',
@@ -464,8 +474,11 @@ const NODE_TO_EXECUTION: Record<string, NodeExecutionMapping> = {
   HumanFeedbackNode: {
     thinkingText: '等待人工确认…',
   },
+  IntentRecognitionNode: {
+    thinkingText: '', // 内部判断，不展示
+  },
   ChitchatNode: {
-    thinkingText: '', // 不展示
+    thinkingText: '', // 闲聊回复，不展示执行面板
   },
 };
 
@@ -485,9 +498,13 @@ function handleNodeForExecution(nodeName: string, data: { text: string; textType
   if (mapping.thinkingText) {
     execStore.setThinking(mapping.thinkingText);
 
-    // 尝试从 text 提取副文案
-    if (data.textType === 'TEXT' && !data.complete && data.text) {
-      execStore.setThinkingHint(truncateText(data.text, 80));
+    // 提取副文案: TEXT 类型从 text 首行截取, SQL/PYTHON/RESULT_SET 使用 tool 名
+    if (!data.complete && data.text) {
+      if (data.textType === 'TEXT') {
+        execStore.setThinkingHint(truncateText(data.text, 80));
+      } else if (mapping.toolName && ['SQL', 'PYTHON', 'RESULT_SET'].includes(data.textType)) {
+        execStore.setThinkingHint(`${mapping.toolName} 输出中…`);
+      }
     }
   }
 
@@ -508,10 +525,7 @@ function handleNodeForExecution(nodeName: string, data: { text: string; textType
     execStore.updateRoundStatus(mapping.finishRound, 'done');
   }
 
-  // 5. 节点完成 → 标记 tool done
-  if (data.complete && execStore.lastAgentName) {
-    execStore.finishLastToolCall(execStore.lastAgentName);
-  }
+  // 5. 节点完成 → tool 完成由 addToolCall 自动处理 (见 store 注释)
 }
 
 function truncateText(text: string, maxLen: number = 80): string {
@@ -541,6 +555,11 @@ function truncateText(text: string, maxLen: number = 80): string {
 **onComplete** (在现有 `setState(sid, { isStreaming: false, closeStream: null })` 之后添加):
 
 ```typescript
+      // 标记最后 Agent round 为 done (Reporter round 由此完成)
+      const es = useExecutionStore.getState();
+      if (es.lastAgentName) {
+        es.updateRoundStatus(es.lastAgentName, 'done');
+      }
       // 思考气泡在 1s 后淡出
       setTimeout(() => {
         useExecutionStore.getState().clearThinking();
@@ -605,7 +624,7 @@ const ThinkingBubble: React.FC = () => {
   if (!thinkingText) return null;
 
   return (
-    <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 16 }}>
+    <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 16 }} data-thinking-bubble>
       <div
         style={{
           maxWidth: '85%',
@@ -950,11 +969,13 @@ const ExecutionDrawer: React.FC = () => {
   const closeDrawer = useExecutionStore((s) => s.closeDrawer);
 
   // 手风琴: 同一时间只展开一个 Round
-  const [expandedRoundId, setExpandedRoundId] = useState<string | null>(null);
+  // 初始 undefined 使首次渲染时自动展开执行中的 Round (null 则跳过自动展开)
+  const [expandedRoundId, setExpandedRoundId] = useState<string | undefined>(undefined);
 
-  // 默认展开当前执行中的 Round; 如果执行中发生变化, 自动切换展开
-  const activeRoundId = rounds.find((r) => r.status === 'running')?.id || null;
-  const currentExpanded = expandedRoundId === undefined ? activeRoundId : expandedRoundId;
+  // 默认展开执行中的 Round
+  const activeRoundId = rounds.find((r) => r.status === 'running')?.id;
+  // 用户手动词切换后 expandedRoundId 为 null (已手动关闭), 不为 undefined (自动模式)
+  const currentExpanded = expandedRoundId !== undefined ? expandedRoundId : activeRoundId;
 
   const allDone = rounds.length > 0 && rounds.every((r) => r.status === 'done');
 
@@ -1178,13 +1199,8 @@ onClick={() => {
             <ThinkingBubble />
 ```
 
-并在 ThinkingBubble 的最外层 div 上添加 data 属性，使 ToolItem 点击能定位:
-
-在 `ThinkingBubble.tsx` 中，给最外层 div 添加 `data-thinking-bubble` 属性（已在 Task 4 中需要更新）。更新 Task 4 的 ThinkingBubble 最外层:
-
-```tsx
-<div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 16 }} data-thinking-bubble>
-```
+> `data-thinking-bubble` 属性已在 Task 4 ThinkingBubble 组件中内置，ToolItem 点击可定位。
+> **注意**: Task 8 commit 中无需再包含 ThinkingBubble.tsx 的修补。
 
 - [ ] **Step 5: 添加 ExecutionToggleButton**
 
@@ -1266,7 +1282,7 @@ npm run dev
 - [ ] **Step 10: Commit**
 
 ```bash
-git add src/views/AgentRun.tsx src/hooks/useAgentChat.ts src/components/run/ThinkingBubble.tsx
+git add src/views/AgentRun.tsx src/hooks/useAgentChat.ts
 git commit -m "feat: integrate ExecutionDrawer + ThinkingBubble into AgentRun layout"
 ```
 
@@ -1436,7 +1452,7 @@ if sse_payload is not None:
         "text": sse_payload.text,
         "textType": sse_payload.text_type,
     }
-    # V3.0 可选字段
+    # V3.0 可选字段: Controller 透传, 前端按需使用
     if sse_payload.agent_name:
         sse_dict["agentName"] = sse_payload.agent_name
     if sse_payload.tool_name:
@@ -1446,6 +1462,9 @@ if sse_payload is not None:
     if sse_payload.tool_summary:
         sse_dict["toolSummary"] = sse_payload.tool_summary
     result["sse_output"] = sse_dict
+    # ★ 保留 metrics_delta: Controller 依赖 _metrics_delta 收集核心指标
+    if sse_payload.metrics_delta:
+        result.setdefault("_metrics_delta", {}).update(sse_payload.metrics_delta)
 ```
 
 - [ ] **Step 4: 运行现有测试**
@@ -1606,7 +1625,7 @@ return SSEPayload(
 
 - [ ] **Step 4: 编排节点 (无 tool)**
 
-`feasibility.py`, `planner.py`, `plan_executor.py`, `human_feedback.py`, `chitchat_node.py`, `intent_recognition.py`:
+`feasibility.py`, `planner.py`, `plan_executor.py`, `human_feedback_node.py`, `chitchat_node.py`, `intent_recognition.py`:
 
 这些节点或无需声明 `agent_name`（编排节点），或仅设置 `agent_name` 不设置 `tool_name`。按需添加即可，无强制要求—前端通过 nodeName infer。
 
@@ -1709,7 +1728,8 @@ npm run dev
 | TableRelationNode | Explorer | find_relations | 正在分析表关联关系… |
 | FeasibilityAssessmentNode | — | — | 正在制定执行计划… |
 | PlannerNode | — | — | 正在制定执行计划… |
-| PlanExecutorNode | — | — | — |
+| IntentRecognitionNode | — | — | (不展示) |
+| PlanExecutorNode | — | — | 正在执行步骤… |
 | SqlGenerateNode | Analyst | text_to_sql | 正在生成 SQL 查询… |
 | SemanticConsistencyNode | Analyst | semantic_check | 正在校验语义一致性… |
 | SqlExecuteNode | Analyst | execute_sql | 正在执行 SQL 查询… |
