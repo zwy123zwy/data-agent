@@ -168,7 +168,7 @@ SQL 生成/执行可能重试（最多 10 次），重试时 `thinkingHint` 显�
 
 **V2.0 兼容**: 当前 16 个线性节点按职责聚合为 3 个 Round：
 
-- **Round 1 · Explorer**: `EvidenceRecallNode` → `SchemaRecallNode` → `QueryEnhanceNode` → `TableRelationNode`（探查数据 + 召回知识 + 改写查询 + 表关联），结束于 `PlannerNode` 执行前
+- **Round 1 · Explorer**: `EvidenceRecallNode` → `SchemaRecallNode` → `QueryEnhanceNode` → `TableRelationNode` → `FeasibilityAssessmentNode` → `PlannerNode`（探查数据 + 召回知识 + 改写查询 + 表关联 + 可行性 + 制定计划），`PlannerNode` 完成后 Explorer round done
 - **Round 2 · Analyst**: `SqlGenerateNode` → `SemanticConsistencyNode` → `SqlExecuteNode` → `PythonGenerateNode` → `PythonExecuteNode` → `PythonAnalyzeNode`（SQL/Python 生成与执行），结束时标记 done
 - **Round 3 · Reporter**: `ReportGeneratorNode`（生成报告）
 
@@ -194,9 +194,16 @@ Round 3 · Reporter     ○ 待执行 (灰色)
 |------|------|--------|
 | 完成 | `#52c41a` (绿) | ✓ |
 | 执行中 | `var(--accent)` (蓝) | ⟳ 脉冲动画 |
+| 部分失败 | `#faad14` (黄) | ⚠ + 部分 tool 成功部分失败 |
 | 失败 | `#ff4d4f` (红) | ✕ + tool 摘要显示错误信息 |
 | 待执行 | `var(--border)` (灰) | ○ |
 | 跳过 | `var(--text-secondary)` | — |
+
+### 执行完成后的面板表现
+
+- 所有 Round 完成后，面板顶部出现一行提示：`✓ 执行完成`（灰色 `var(--text-secondary)`，居中，font-size 12px）
+- Round 列表保持正常颜色，不做整体置灰
+- 下次新请求开始时，`reset()` 清空 Round 列表，提示消失
 
 ### 异常状态处理
 
@@ -258,7 +265,7 @@ interface AgentRound {
   id: string
   agentName: string      // Explorer / Analyst / Reporter
   roundIndex: number
-  status: 'pending' | 'running' | 'done' | 'error' | 'skipped'
+  status: 'pending' | 'running' | 'done' | 'partial_failure' | 'error' | 'skipped'
   tools: ToolCall[]
   input?: string         // Agent 接收的 instruction
   output?: string        // Agent 完成的 summary
@@ -288,6 +295,8 @@ interface ExecutionState {
   // Tool 完成追踪
   lastAgentName: string | null
   finishLastToolCall: (agentName: string) => void
+  updateLastRunningToolStatus: (status: ToolCall['status']) => void
+  updateLastRunningRoundStatus: (status: AgentRound['status']) => void
 
   // 停止/重置
   stop: () => void          // 停止按钮触发 — 标记 running → skipped, 清除 thinking
@@ -408,15 +417,54 @@ switch (payload.nodeName) {
     break
 }
 
-// 每个 node SSE 消息的 complete 字段为 true 时 → 更新对应 tool 状态为 'done'
-if (payload.complete) {
-  execStore.finishLastToolCall(lastAgentName)
+// 每个 node SSE 消息的 complete 为 true → 更新对应 tool 状态为 'done'
+// 注意: 此处的 payload.complete 是 GraphNodeResponse 的 complete 字段 (节点级完成),
+//       不是 SSE event: complete (工作流级完成)
+if (payload.complete && execStore.lastAgentName) {
+  execStore.finishLastToolCall(execStore.lastAgentName)
 }
 
-// 当 textType 指示 tool 结果时更新摘要
+// 当 textType 为 TEXT 且非完成态 → 尝试提取 tool 结果摘要作为 thinkingHint
 if (payload.textType === 'TEXT' && !payload.complete) {
-  // 普通进度文本, 可提取为 thinkingHint
-  execStore.setThinkingHint(extractSummary(payload.text))
+  execStore.setThinkingHint(truncateText(payload.text, 80))
+}
+```
+
+#### 生命周期事件处理（独立于 nodeName switch）
+
+SSE 命名事件 (`event: complete` / `event: error` / `event: paused`) 通过 `EventSource.addEventListener()` 接收，**不进入** `payload.nodeName` switch：
+
+```typescript
+// 前端 EventSource 事件监听
+eventSource.addEventListener('complete', (e) => {
+  const data = JSON.parse(e.data)
+  // 思考气泡在 AI 回复渲染后 1s 淡出
+  setTimeout(() => execStore.clearThinking(), 1000)
+  // 抽屉保留, Round 状态不变 (已全部 done)
+})
+
+eventSource.addEventListener('error', (e) => {
+  const data = JSON.parse(e.data)
+  // 最后一个 running 的 Tool/Round 标记为 error
+  execStore.updateLastRunningToolStatus('error')
+  execStore.updateLastRunningRoundStatus('error')
+})
+
+eventSource.addEventListener('paused', (e) => {
+  // 等待人工确认 — 抽屉和思考气泡保持当前状态
+  // 输入区出现确认/拒绝按钮 (现有 HumanFeedback 逻辑不变)
+})
+```
+
+`truncateText` 工具函数:
+
+```typescript
+/** 截取文本首行，限制 maxLen 字符，用于 tool 摘要展示 */
+function truncateText(text: string, maxLen: number = 80): string {
+  const firstLine = text.split('\n')[0].trim()
+  return firstLine.length > maxLen
+    ? firstLine.slice(0, maxLen) + '...'
+    : firstLine
 }
 ```
 
