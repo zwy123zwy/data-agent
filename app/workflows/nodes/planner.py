@@ -226,6 +226,7 @@ class PlannerNode(WorkflowNode):
 
     def format_sse(self, output: Dict[str, Any]) -> SSEPayload | None:
         plan_raw = output.get("query_plan", "")
+        step_count = 0  # 显式初始化，避免 except 分支中变量未定义
         try:
             plan = json.loads(plan_raw) if isinstance(plan_raw, str) else plan_raw
             steps = plan.get("execution_plan", []) if isinstance(plan, dict) else []
@@ -243,7 +244,7 @@ class PlannerNode(WorkflowNode):
         return SSEPayload(
             text=text,
             text_type="TEXT",
-            metrics_delta={"plan_steps": step_count if 'step_count' in dir() else 0},
+            metrics_delta={"plan_steps": step_count},
             agent_name="Explorer",
         )
 
