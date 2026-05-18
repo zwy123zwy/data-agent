@@ -110,8 +110,8 @@ AgentRun (page)
 | SSE nodeName (实际值) | Agent Round | thinkingText |
 |----------------------|-------------|-------------|
 | `EvidenceRecallNode` | Explorer | 正在召回业务知识… |
-| `SchemaRecallNode` | Explorer | 正在探查数据表结构… |
 | `QueryEnhanceNode` | Explorer | 正在改写查询… |
+| `SchemaRecallNode` | Explorer | 正在探查数据表结构… |
 | `TableRelationNode` | Explorer | 正在分析表关联关系… |
 | `FeasibilityAssessmentNode` | — | 正在制定执行计划… |
 | `PlannerNode` | — | 正在制定执行计划… |
@@ -159,7 +159,7 @@ SQL 生成/执行可能重试（最多 10 次），重试时 `thinkingHint` 显�
 
 - **滑入**: `drawerVisible` 由 `EvidenceRecallNode` 或 `SchemaRecallNode` 的首个 SSE 消息触发 → `setDrawerVisible(true)`
 - **关闭**: 仅用户点击 ✕ 按钮 → `setDrawerVisible(false)`
-- **不自动关闭**: 执行结束后抽屉保持可见，内容置灰提示「执行完成」，下次执行重新点亮
+- **不自动关闭**: 执行结束后抽屉保持可见，顶部出现 `✓ 执行完成` 提示，下次 `reset()` 清空后重新点亮
 - **chitchat**: 不打开抽屉，不产生 Round
 
 ### 面板内容 — AgentRound 分组规则
@@ -168,7 +168,7 @@ SQL 生成/执行可能重试（最多 10 次），重试时 `thinkingHint` 显�
 
 **V2.0 兼容**: 当前 16 个线性节点按职责聚合为 3 个 Round：
 
-- **Round 1 · Explorer**: `EvidenceRecallNode` → `SchemaRecallNode` → `QueryEnhanceNode` → `TableRelationNode` → `FeasibilityAssessmentNode` → `PlannerNode`（探查数据 + 召回知识 + 改写查询 + 表关联 + 可行性 + 制定计划），`PlannerNode` 完成后 Explorer round done
+- **Round 1 · Explorer**: `EvidenceRecallNode` → `QueryEnhanceNode` → `SchemaRecallNode` → `TableRelationNode` → `FeasibilityAssessmentNode` → `PlannerNode`（召回知识 + 改写查询 + 探查表结构 + 表关联 + 可行性 + 制定计划），`PlannerNode` 完成后 Explorer round done
 - **Round 2 · Analyst**: `SqlGenerateNode` → `SemanticConsistencyNode` → `SqlExecuteNode` → `PythonGenerateNode` → `PythonExecuteNode` → `PythonAnalyzeNode`（SQL/Python 生成与执行），结束时标记 done
 - **Round 3 · Reporter**: `ReportGeneratorNode`（生成报告）
 
@@ -331,7 +331,7 @@ stop: () => {
 // 详见 streaming_graph_controller.py NODE_NAME_MAP
 
 switch (payload.nodeName) {
-  // ===== Round 1: Explorer (探查 + 召回 + 改写 + 关联) =====
+  // ===== Round 1: Explorer (召回 + 改写 + 探查 + 关联) =====
   case 'EvidenceRecallNode':
     execStore.openDrawer()
     execStore.setThinking('正在召回业务知识…')
@@ -339,14 +339,14 @@ switch (payload.nodeName) {
     execStore.addToolCall('Explorer', { name: 'search_knowledge', status: 'running' })
     break
 
-  case 'SchemaRecallNode':
-    execStore.setThinking('正在探查数据表结构…')
-    execStore.addToolCall('Explorer', { name: 'get_schema', status: 'running' })
-    break
-
   case 'QueryEnhanceNode':
     execStore.setThinking('正在改写查询…')
     execStore.addToolCall('Explorer', { name: 'rewrite_query', status: 'running' })
+    break
+
+  case 'SchemaRecallNode':
+    execStore.setThinking('正在探查数据表结构…')
+    execStore.addToolCall('Explorer', { name: 'get_schema', status: 'running' })
     break
 
   case 'TableRelationNode':
@@ -356,9 +356,12 @@ switch (payload.nodeName) {
 
   // ===== 编排节点 (不产生 tool 条目) =====
   case 'FeasibilityAssessmentNode':
+    execStore.setThinking('正在制定执行计划…')
+    break
+
   case 'PlannerNode':
     execStore.setThinking('正在制定执行计划…')
-    // PlannerNode 完成后 → 标记 Explorer round done, 准备 Analyst round
+    execStore.updateRoundStatus('Explorer', 'done')
     break
 
   // ===== 循环调度器 (不产生 tool 条目) =====
@@ -432,28 +435,44 @@ if (payload.textType === 'TEXT' && !payload.complete) {
 
 #### 生命周期事件处理（独立于 nodeName switch）
 
-SSE 命名事件 (`event: complete` / `event: error` / `event: paused`) 通过 `EventSource.addEventListener()` 接收，**不进入** `payload.nodeName` switch：
+当前前端使用 `fetch + ReadableStream` 解析 SSE (见 `src/services/graph.ts`)。流中通过 `event: <type>` 行前缀区分事件类型，DATA 消息通过 `data: <json>` 行进入 `nodeName` switch：
 
 ```typescript
-// 前端 EventSource 事件监听
-eventSource.addEventListener('complete', (e) => {
-  const data = JSON.parse(e.data)
-  // 思考气泡在 AI 回复渲染后 1s 淡出
-  setTimeout(() => execStore.clearThinking(), 1000)
-  // 抽屉保留, Round 状态不变 (已全部 done)
-})
+// 在 ReadableStream 解析循环中:
+let currentEvent = 'message' // 默认
 
-eventSource.addEventListener('error', (e) => {
-  const data = JSON.parse(e.data)
-  // 最后一个 running 的 Tool/Round 标记为 error
-  execStore.updateLastRunningToolStatus('error')
-  execStore.updateLastRunningRoundStatus('error')
-})
+// 逐行读取
+if (line.startsWith('event: ')) {
+  currentEvent = line.slice(7).trim()  // complete | error | paused
+} else if (line.startsWith('data: ')) {
+  const payload = JSON.parse(line.slice(6))
 
-eventSource.addEventListener('paused', (e) => {
-  // 等待人工确认 — 抽屉和思考气泡保持当前状态
-  // 输入区出现确认/拒绝按钮 (现有 HumanFeedback 逻辑不变)
-})
+  switch (currentEvent) {
+    case 'message':
+      // 进入 payload.nodeName switch (见上方)
+      handleNodeMessage(payload)
+      break
+
+    case 'complete':
+      // 思考气泡在 AI 回复渲染后 1s 淡出
+      setTimeout(() => execStore.clearThinking(), 1000)
+      // 抽屉保留, Round 状态不变 (已全部 done)
+      break
+
+    case 'error':
+      // 最后一个 running 的 Tool/Round 标记为 error
+      execStore.updateLastRunningToolStatus('error')
+      execStore.updateLastRunningRoundStatus('error')
+      break
+
+    case 'paused':
+      // 等待人工确认 — 抽屉和思考气泡保持当前状态
+      // 输入区出现确认/拒绝按钮 (现有 HumanFeedback 逻辑不变)
+      break
+  }
+
+  currentEvent = 'message' // 重置
+}
 ```
 
 `truncateText` 工具函数:
@@ -481,8 +500,8 @@ function truncateText(text: string, maxLen: number = 80): string {
 | `IntentRecognitionNode` | — (内部判断) | — |
 | `ChitchatNode` | — | 不打开抽屉 |
 | `EvidenceRecallNode` | 🧠 正在召回业务知识… | 打开抽屉, +Round 1 Explorer, +tool: search_knowledge |
-| `SchemaRecallNode` | 🧠 正在探查数据表结构… | +tool: get_schema |
 | `QueryEnhanceNode` | 🧠 正在改写查询… | +tool: rewrite_query |
+| `SchemaRecallNode` | 🧠 正在探查数据表结构… | +tool: get_schema |
 | `TableRelationNode` | 🧠 正在分析表关联关系… | +tool: find_relations |
 | `FeasibilityAssessmentNode` | 🧠 正在制定执行计划… | — |
 | `PlannerNode` | 🧠 正在制定执行计划… | Explorer round → done (切换到 Analyst) |
