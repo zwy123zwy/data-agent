@@ -2,6 +2,7 @@
 
 ## 2026-05-18
 
+- **前端交互模式设计文档**: 新增 `docs/superpowers/specs/2026-05-18-frontend-interaction-design.md` — 确定 B 方案（两栏+可展开抽屉）、思考气泡单例刷新、执行面板手动关闭、节点三种交互（展开 tool / 定位气泡 / Popover 详情）、Zustand executionStore 状态结构和 SSE→UI 完整映射表。
 - **闲聊回复节点 (chitchat_node)**: 意图识别为非数据分析时，不再静默 END，改为通过 `chitchat_node` 调用 LLM 生成友好的中文对话回复。`graph.py` 路由 `route_after_intent` 新增 `chitchat_node` 分支。`streaming_graph_controller.py` 注册 `NODE_NAME_MAP` 和 `USER_VISIBLE_NODES`。
 - **清理死文件和过时引用**: 删除 `app/services/hybrid_search.py`（无调用方）、`milvus-docker-compose.yml`（使用 Chroma 而非 Milvus），清理所有 `__pycache__/` 目录和 `checkpoints.db` 运行时文件，更新 `config.py` 和 `services/__init__.py` 中的过时引用。
 
