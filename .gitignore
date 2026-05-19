@@ -85,3 +85,5 @@ docs/
 
 # Docker Compose overrides (personal)
 docker-compose.override.yml
+
+./superpowers/

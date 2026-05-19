@@ -188,6 +188,13 @@ def route_after_python_execute(state: WorkflowState) -> Literal["python_analyze"
 
 workflow = StateGraph(WorkflowState)
 
+# 读图顺序:
+# 1. 先看 set_entry_point("intent_recognition")，确认所有请求从意图识别进入。
+# 2. 再看第一阶段的线性边，理解如何从用户问题补齐知识、Schema、表关系和可行性。
+# 3. 然后看 planner -> plan_executor，理解执行计划如何进入循环调度。
+# 4. 最后看 SQL/Python 两条流水线都回到 plan_executor，直到 report_generator 或 END。
+#    这也是后端 agent 的核心: PlanExecutor 反复读取 state，决定下一步该调用哪个工具节点。
+
 # 添加所有节点 — 每个节点对应 workflows/nodes/ 下的一个 .py 文件
 workflow.add_node("intent_recognition", intent_recognition_node)
 workflow.add_node("knowledge_recall", knowledge_recall_node)

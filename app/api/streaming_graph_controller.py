@@ -40,12 +40,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["流式查询"])
 
-# ============================================================================
-# Python → Java 节点名映射
-# 前端通过 nodeName 分组展示消息块，更换 nodeName 时创建新的消息块
-# Java 节点名来自 Constant.java 的 *_NODE 常量，但 Spring AI output.node()
-# 返回的是类简单名称（如 ReportGeneratorNode），前端根据此值做特殊处理
-# ============================================================================
+
 NODE_NAME_MAP = {
     "intent_recognition": "IntentRecognitionNode",
     "knowledge_recall": "EvidenceRecallNode",
@@ -227,6 +222,14 @@ async def stream_workflow_execution(
     rejected_plan: bool = False,
     nl2sql_only: bool = False,
 ):
+    # Agent 执行过程按下面 7 步理解:
+    # 1. 前端打开 SSE 连接并传入 agentId/query/threadId 等参数。
+    # 2. 后端准备 thread_id；同一个 thread_id 用于多轮上下文和 LangGraph checkpoint。
+    # 3. 新请求先加载 Agent、激活数据源、语义模型、多轮上下文；人工反馈恢复请求则直接用 Command(resume=...)。
+    # 4. _build_initial_state() 把请求输入整理成 WorkflowState，作为 LangGraph 的全局共享状态。
+    # 5. compiled_workflow.astream(..., stream_mode="updates") 逐节点执行，节点完成后返回 {node_name: state_update}。
+    # 6. Controller 读取节点注入的 sse_output，包装成 GraphNodeResponse，通过 data: SSE 推给前端。
+    # 7. 流程暂停/完成/失败时分别发送 event: paused / complete / error，前端据此更新会话和执行面板状态。
 
     logger.info(f"[Stream] Start, agentId={agent_id}, query={user_query}, threadId={thread_id}")
     if not thread_id:

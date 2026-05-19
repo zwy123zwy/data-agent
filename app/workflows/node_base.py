@@ -121,6 +121,12 @@ class WorkflowNode(ABC):
         """
         from ..services.langfuse_service import get_langfuse_service
 
+        # 单个节点的执行顺序:
+        # 1. LangGraph 根据 graph.py 的边调用当前 WorkflowNode 实例。
+        # 2. 基类先开启 Langfuse span，记录节点名和 I/O 契约。
+        # 3. 子类 execute(state) 执行业务逻辑，只返回本节点新增或修改的 state update。
+        # 4. 子类 format_sse(result) 把本节点希望前端看到的内容声明为 SSEPayload。
+        # 5. 基类把 SSEPayload 注入 result["sse_output"]，Controller 再统一转成 SSE。
         langfuse = get_langfuse_service()
         trace_id = state.get("trace_thread_id") or state.get("agent_id", "unknown")
 
