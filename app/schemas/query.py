@@ -11,6 +11,7 @@ class QueryRequest(BaseModel):
     human_feedback_content: Optional[str] = Field(None, alias="humanFeedbackContent", description="人工反馈内容（恢复时传入）")
     rejected_plan: bool = Field(False, alias="rejectedPlan", description="是否拒绝当前方案")
     nl2sql_only: bool = Field(False, alias="nl2sqlOnly", description="仅 NL2SQL 模式")
+    runtime: str = Field("v1", alias="runtime", description="运行时版本: v1 (legacy) | v2 (new Agent Runtime)")
 
     model_config = ConfigDict(populate_by_name=True)
 

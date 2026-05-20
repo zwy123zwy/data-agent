@@ -15,6 +15,9 @@ from app.core.database import engine, Base
 from app.models.agent import Agent  # noqa: F401
 from app.models.datasource import Datasource  # noqa: F401
 from app.models.agent_datasource import AgentDatasource  # noqa: F401
+from app.models.agent_run import AgentRun  # noqa: F401
+from app.models.agent_run_event import AgentRunEvent  # noqa: F401
+from app.models.agent_artifact import AgentArtifactRecord  # noqa: F401
 
 
 async def init_database():
