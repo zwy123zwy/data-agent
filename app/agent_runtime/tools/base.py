@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_runtime.artifacts import Artifact
 from app.agent_runtime.context import RuntimeContext
@@ -41,7 +42,7 @@ class BaseTool(ABC):
         self,
         ctx: RuntimeContext,
         state: dict[str, Any],
-        db: Any,
+        db: AsyncSession,
     ) -> ToolResult:
         """执行工具；state 为 V1 WorkflowState 字典，可就地更新。"""
 
@@ -49,7 +50,7 @@ class BaseTool(ABC):
         self,
         ctx: RuntimeContext,
         state: dict[str, Any],
-        db: Any,
+        db: AsyncSession,
     ) -> ToolResult:
         start = time.perf_counter()
         result = await self.run(ctx, state, db)

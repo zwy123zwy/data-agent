@@ -13,6 +13,7 @@ from app.agent_runtime.events import AgentSSEEvent
 
 logger = logging.getLogger(__name__)
 
+# 开发阶段限制为 3 轮；roadmap §6.3 目标 max_rounds=30，提测前再与配置对齐
 MAX_DEEP_ROUNDS = 3
 
 

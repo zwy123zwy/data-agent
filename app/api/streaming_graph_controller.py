@@ -626,6 +626,7 @@ async def stream_workflow_execution_v2(
     """
     from ..agent_runtime.events import AgentSSEEvent
     from ..agent_runtime.gateway import classify_intent, get_route_action
+    from ..services.agent_service import AgentService
 
     if not thread_id:
         thread_id = str(uuid.uuid4())
@@ -642,6 +643,20 @@ async def stream_workflow_execution_v2(
         return _format_logged_sse_data(data)
 
     try:
+        # [阶段3] 与 V1 一致：先校验 Agent，避免 ContextEngine ValueError 落入通用异常
+        agent = await AgentService.get_agent(db, agent_id)
+        if not agent:
+            yield _emit(AgentSSEEvent.create_v2_only(
+                run_id=run_id,
+                event_type="error",
+                agent_id=agent_id,
+                thread_id=thread_id,
+                status="error",
+                summary="Agent 不存在",
+                error="AGENT_NOT_FOUND",
+            ))
+            return
+
         # ===== Step 1: Gateway 意图分类 =====
         yield _emit(AgentSSEEvent.create_v2_only(
             run_id=run_id,

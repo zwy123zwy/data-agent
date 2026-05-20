@@ -44,7 +44,7 @@ def emit_text_delta(
         event_type="text.delta",
         agent_id=ctx.agent_id,
         thread_id=ctx.thread_id,
-        agent_name=agent_name,  # type: ignore[arg-type]
+        agent_name=agent_name,
         action=action,
         status="running",
         summary="",

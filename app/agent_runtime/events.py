@@ -12,9 +12,23 @@
 #   - Import from app/api/（跨层调用禁止）
 #   - Hardcode prompt templates（走 prompt_config service）
 
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
+
+# [SSOT] V2 eventType 枚举 — 与 docs/01-ARCHITECTURE.md §6.3、前端 types/graph.ts 保持一致
+AgentEventType = Literal[
+    "agent.think",
+    "tool.call",
+    "tool.result",
+    "text.delta",
+    "agent.complete",
+    "clarification.requested",
+    "run.complete",
+    "error",
+]
+
+AGENT_EVENT_TYPES: tuple[str, ...] = get_args(AgentEventType)
 
 
 class AgentSSEEvent(BaseModel):
@@ -29,19 +43,9 @@ class AgentSSEEvent(BaseModel):
 
     # ── V2 语义字段（新前端读取）──
     run_id: str | None = Field(default=None, alias="runId")
-    event_type: Literal[
-        "agent.think",  # Gateway 分类完成 / Context 装配完成 / Plan 生成完成
-        "tool.call",  # Tool 即将执行
-        "tool.result",  # Tool 执行完成（ok 或 error）
-        "text.delta",  # LLM 流式输出片段（逐 token/字）
-        "agent.complete",  # Agent subgraph 执行完成
-        "clarification.requested",  # Gateway 需要用户补充信息
-        "run.complete",  # 整个 run 结束
-        "error",  # 不可恢复错误
-    ] | None = Field(default=None, alias="eventType")
-    agent_name: Literal["Explorer", "Insight", "Reporter"] | None = Field(
-        default=None, alias="agentName"
-    )
+    event_type: AgentEventType | None = Field(default=None, alias="eventType")
+    # Gateway / 澄清等场景可能无 agentName；已知 Agent 为 Explorer | Insight | Reporter
+    agent_name: str | None = Field(default=None, alias="agentName")
     action: str | None = Field(default=None, alias="action")
     status: Literal["running", "ok", "error"] | None = Field(default=None, alias="status")
     summary: str | None = Field(
@@ -68,11 +72,7 @@ class AgentSSEEvent(BaseModel):
     def create_v2_only(
         cls,
         run_id: str,
-        event_type: Literal[
-            "agent.think", "tool.call", "tool.result", "text.delta",
-            "agent.complete", "clarification.requested",
-            "run.complete", "error",
-        ],
+        event_type: AgentEventType,
         agent_id: int,
         thread_id: str,
         agent_name: str | None = None,

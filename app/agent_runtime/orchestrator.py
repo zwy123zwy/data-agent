@@ -29,11 +29,13 @@ def _max_rounds(mode: str) -> int:
     return 30 if mode == "deep_research" else 10
 
 
+# [阶段5] TODO: 迁入 prompt_config service（docs/05-MODULE-BOUNDARIES-REVIEW §2.4）
 CHITCHAT_SYSTEM_PROMPT = """你是一个友好的 AI 数据分析助手。
 用户当前的问题不涉及数据库查询或数据分析，请用自然、简洁的语言回复。
 如果用户打招呼，热情回应；如果用户问你的能力，介绍你能做数据查询和分析。
 始终用中文回复。"""
 
+# [阶段5] TODO: 迁入 prompt_config service
 CLARIFY_SYSTEM_PROMPT = """你是数据分析助手。用户的问题不够明确，无法直接查询数据。
 请用简短、友好的中文引导用户补充：想查什么指标/表、时间范围、是否需要报告。
 不要编造查询结果，一两段即可。"""
@@ -217,7 +219,8 @@ async def run_orchestrated_loop(
             yield e
         return
 
-    # 未知 mode 降级阶段1 最小链
+    # 未知 mode 降级阶段1 最小链（仍会经 run_v2_orchestrator 持久化）
+    logger.warning("[Orchestrator] 未知 mode=%s，降级 run_smart_query_minimal", mode)
     async for e in run_smart_query_minimal(ctx, db):
         yield e
 
@@ -258,14 +261,27 @@ async def run_v2_orchestrator(
     mode: ModeType,
 ) -> AsyncIterator[AgentSSEEvent]:
     """[阶段3] Controller 入口：装配 Context → 编排 → 可选持久化。"""
-    ctx = await ContextEngine().build_context(
-        agent_id=agent_id,
-        user_query=user_query,
-        thread_id=thread_id,
-        db=db,
-        mode=mode,
-        run_id=run_id,
-    )
+    try:
+        ctx = await ContextEngine().build_context(
+            agent_id=agent_id,
+            user_query=user_query,
+            thread_id=thread_id,
+            db=db,
+            mode=mode,
+            run_id=run_id,
+        )
+    except ValueError as exc:
+        msg = str(exc)
+        yield AgentSSEEvent.create_v2_only(
+            run_id=run_id,
+            event_type="error",
+            agent_id=agent_id,
+            thread_id=thread_id,
+            status="error",
+            summary=msg,
+            error="AGENT_NOT_FOUND" if "不存在" in msg else "CONTEXT_BUILD_FAILED",
+        )
+        return
 
     events: list[AgentSSEEvent] = []
     async for event in run_orchestrated_loop(ctx, db, mode):

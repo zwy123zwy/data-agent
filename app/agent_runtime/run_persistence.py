@@ -28,6 +28,8 @@ class RunPersistenceService:
         events: list[AgentSSEEvent],
         metrics: RunMetrics | None = None,
     ) -> None:
+        # 约定：工具级失败由 Explorer 等再 emit event_type=error（见 explorer_agent），
+        # 不单靠 tool.result.status=error 判定整 run 失败。
         final_status = "error" if any(e.event_type == "error" for e in events) else "ok"
         summary = next(
             (e.summary for e in reversed(events) if e.event_type == "run.complete"),
