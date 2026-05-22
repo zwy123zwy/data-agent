@@ -31,6 +31,7 @@ from ..services.semantic_model_service import SemanticModelService
 from ..services.node_metrics import NodeMetricsTracker
 from ..services.metrics_aggregation_service import MetricsAggregationService
 from ..services.multi_turn import get_multi_turn_manager
+from ..services.thread_memory import ensure_multi_turn_hydrated, resolve_stream_thread_id
 import asyncio
 import json
 import logging
@@ -231,10 +232,11 @@ async def stream_workflow_execution(
     # 6. Controller 读取节点注入的 sse_output，包装成 GraphNodeResponse，通过 data: SSE 推给前端。
     # 7. 流程暂停/完成/失败时分别发送 event: paused / complete / error，前端据此更新会话和执行面板状态。
 
+    thread_id = resolve_stream_thread_id(thread_id)
     logger.info(f"[Stream] Start, agentId={agent_id}, query={user_query}, threadId={thread_id}")
-    if not thread_id:
-        thread_id = str(uuid.uuid4())
-        
+
+    await ensure_multi_turn_hydrated(db, thread_id)
+
     config = {"configurable": {"thread_id": thread_id}}
 
     try:
@@ -452,7 +454,6 @@ async def stream_workflow_execution(
                         metrics_state[key] = value
 
                 # ★ 意图识别：非 data_analysis 意图 → 提前结束流程
-                # TODO: intent 字段应通过 _metrics_delta 传递，避免 Controller 窥探节点内部
                 if node_name == "intent_recognition":
                     intent = node_output.get("intent", "")
                     if intent != "data_analysis":
@@ -500,8 +501,6 @@ async def stream_workflow_execution(
 
                 # ===== 节点指标状态判定 (NodeMetricsTracker) =====
                 # 大部分节点总是成功；少数节点可能失败
-                # TODO: 后续迁移 — 错误信号应由节点通过 _metrics_delta 声明，
-                #       而非 Controller 硬编码 node_name 窥探字段
                 status = "success"
                 if node_name == "sql_execute" and node_output.get("sql_error"):
                     status = "error"
@@ -606,41 +605,115 @@ async def stream_query(
     )
 
 
+def _v2_record_multi_turn(
+    thread_id: str,
+    user_query: str,
+    *,
+    action: str,
+    mode: str,
+    response_hint: str = "",
+) -> None:
+    """V2 本轮结束后写入多轮上下文，供下次 Gateway / ContextEngine 使用。"""
+    summary = (response_hint or f"[V2 {action} mode={mode}]").strip()[:500]
+    get_multi_turn_manager().add_turn(thread_id, user_query, summary)
+
+
 async def stream_workflow_execution_v2(
     agent_id: int,
     user_query: str,
     db: AsyncSession,
     thread_id: str | None = None,
-    multi_turn_context: list[dict] | None = None,
     force_mode: str | None = None,
 ):
-    """V2 Agent Runtime — 最小可行流程。
-
-    [Harness: Routing #3] 当前阶段只走通 Controller → Gateway → SSE 这条链路。
-    后续迭代逐步接入 ContextEngine → Orchestrator → Explorer/Insight/Reporter。
-
-    流程:
-      1. Gateway.classify_intent() 意图分类
-      2. 根据置信度路由: execute → continue / clarify → ask / fallback → v1
-      3. 每个步骤输出 SSE 事件（V2 语义字段 + V1 兼容字段）
-    """
+    """V2 Agent Runtime — Harness 或旧 agent_runtime（由配置切换）。"""
     from ..agent_runtime.events import AgentSSEEvent
-    from ..agent_runtime.gateway import classify_intent, get_route_action
-    from ..services.agent_service import AgentService
+    from ..core.config import settings
 
-    if not thread_id:
-        thread_id = str(uuid.uuid4())
+    thread_id = resolve_stream_thread_id(thread_id)
     run_id = str(uuid.uuid4())
 
     logger.info(
-        "[V2 Stream] Start, agentId=%s, query=%s, threadId=%s, runId=%s",
-        agent_id, user_query, thread_id, run_id,
+        "[V2 Stream] Start, agentId=%s, query=%s, threadId=%s, runId=%s, harness=%s",
+        agent_id,
+        user_query,
+        thread_id,
+        run_id,
+        settings.harness_v2_enabled and not settings.harness_v2_use_legacy_agent_runtime,
     )
 
+    await ensure_multi_turn_hydrated(db, thread_id)
+
+# _emit: 将 AgentSSEEvent (Pydantic) 序列化为 SSE 帧。
+#   - event.model_dump(by_alias=True) → Python snake_case 自动转 camelCase (如 event_type→eventType)，对齐前端 JS 命名
+#   - exclude_none=True → 值为 None 的字段不出现在 JSON 中，减小帧体积，前端收到更干净的 payload
+#   - _format_logged_sse_data → 包一层 SSE data: 前缀 + 写日志
     def _emit(event: AgentSSEEvent) -> str:
         """将 AgentSSEEvent 序列化为 SSE 帧并记录日志。"""
         data = event.model_dump(by_alias=True, exclude_none=True)
         return _format_logged_sse_data(data)
+
+    # [阶段1] Harness 新编排：PPAF 顺序，不复用旧 Gateway 内联逻辑
+    if settings.harness_v2_enabled and not settings.harness_v2_use_legacy_agent_runtime:
+        from ..harness.orchestration.coordinator import HarnessCoordinator
+
+        coordinator = HarnessCoordinator()
+        last_mode = "smart_query"
+        last_action = "execute"
+        try:
+            async for v2_event in coordinator.stream_run(
+                agent_id=agent_id,
+                user_query=user_query,
+                db=db,
+                thread_id=thread_id,
+                run_id=run_id,
+                force_mode=force_mode,
+            ):
+                yield _emit(v2_event)
+                if v2_event.event_type == "error":
+                    return
+                if v2_event.action and "gateway.intent" in (v2_event.action or ""):
+                    last_action = "execute"
+            yield _emit(AgentSSEEvent.create_v2_only(
+                run_id=run_id,
+                event_type="run.complete",
+                agent_id=agent_id,
+                thread_id=thread_id,
+                status="ok",
+                summary=f"Harness V2 完成 (mode={last_mode})",
+            ))
+            _v2_record_multi_turn(
+                thread_id,
+                user_query,
+                action=last_action,
+                mode=last_mode,
+                response_hint="[Harness V2]",
+            )
+            return
+        except asyncio.CancelledError:
+            logger.info("[V2 Stream][Harness] Client disconnected, threadId=%s", thread_id)
+            return
+        except Exception as e:
+            import traceback as tb
+            tb.print_exc()
+            logger.error(
+                "[V2 Stream][Harness] Error threadId=%s: %s\n%s",
+                thread_id,
+                e,
+                tb.format_exc(),
+            )
+            yield _emit(AgentSSEEvent.create_v2_only(
+                run_id=run_id,
+                event_type="error",
+                agent_id=agent_id,
+                thread_id=thread_id,
+                status="error",
+                summary="Harness V2 执行异常",
+                error=str(e),
+            ))
+            return
+
+    from ..agent_runtime.gateway import classify_intent, get_route_action
+    from ..services.agent_service import AgentService
 
     try:
         # [阶段3] 与 V1 一致：先校验 Agent，避免 ContextEngine ValueError 落入通用异常
@@ -657,20 +730,19 @@ async def stream_workflow_execution_v2(
             ))
             return
 
-        # ===== Step 1: Gateway 意图分类 =====
-        yield _emit(AgentSSEEvent.create_v2_only(
-            run_id=run_id,
-            event_type="agent.think",
-            agent_id=agent_id,
-            thread_id=thread_id,
-            agent_name=None,
-            status="running",
-            summary="Gateway 正在分析用户意图...",
-        ))
+        # ===== Step 1: Gateway 意图分类（分类完成后再发 SSE，避免占位帧一直 loading）=====
+        # 与 V1 相同数据源：MultiTurnContextManager（按 thread_id 内存轮次）
+        conversation_history = get_multi_turn_manager().get_messages_for_llm(thread_id)
+        if conversation_history:
+            logger.info(
+                "[V2 Stream] Multi-turn for Gateway: %d messages, threadId=%s",
+                len(conversation_history),
+                thread_id,
+            )
 
         classification = await classify_intent(
             user_query=user_query,
-            conversation_history=multi_turn_context,
+            conversation_history=conversation_history or None,
         )
         # [阶段4] 开发用强制 mode（跳过 Gateway 低置信度澄清/降级）
         _valid_force = frozenset({"smart_query", "deep_research", "report", "chitchat"})
@@ -682,21 +754,39 @@ async def stream_workflow_execution_v2(
         if force_mode and force_mode != "auto" and force_mode in _valid_force:
             action = "execute"
 
-        # 发送分类结果（text 携带 reasoning，供前端思考时间线展开）
-        _reasoning = classification.get("reasoning") or ""
+        # 意图结论：text 仅放 LLM reasoning，供时间线展开
+        _reasoning = (classification.get("reasoning") or "").strip()
+        _mode = classification["mode"]
+        _conf = classification["confidence"]
         yield _emit(AgentSSEEvent.create_v2_only(
             run_id=run_id,
             event_type="agent.think",
             agent_id=agent_id,
             thread_id=thread_id,
             agent_name=None,
+            action="gateway.intent",
             status="ok",
-            summary=f"意图: {classification['mode']} (置信度: {classification['confidence']:.0%})",
-            text=_reasoning,
+            summary=f"意图: {_mode} (置信度: {_conf:.0%})",
+            text=_reasoning or "（模型未返回判断依据）",
         ))
 
         # ===== Step 2: 根据置信度路由 =====
         if action == "clarify":
+            yield _emit(AgentSSEEvent.create_v2_only(
+                run_id=run_id,
+                event_type="agent.think",
+                agent_id=agent_id,
+                thread_id=thread_id,
+                agent_name=None,
+                action="gateway.route",
+                status="ok",
+                summary="路由决策: 请求用户澄清",
+                text=(
+                    f"路由动作: clarify\n"
+                    f"分类模式: {_mode}\n"
+                    f"置信度: {_conf:.0%}（0.3–0.7 需补充信息）"
+                ),
+            ))
             clarify_reason = classification.get("reasoning", "请补充更多信息")
             yield _emit(AgentSSEEvent.create_v2_only(
                 run_id=run_id,
@@ -728,8 +818,15 @@ async def stream_workflow_execution_v2(
                 event_type="agent.think",
                 agent_id=agent_id,
                 thread_id=thread_id,
-                status="running",
-                summary="置信度过低，降级到 V1 流程...",
+                agent_name=None,
+                action="gateway.route",
+                status="ok",
+                summary="路由决策: 降级到 V1 流程",
+                text=(
+                    f"路由动作: fallback_v1\n"
+                    f"分类模式: {_mode}\n"
+                    f"置信度: {_conf:.0%}（低于 0.3）"
+                ),
             ))
             logger.info(
                 "[V2 Stream] Fallback to V1, confidence=%.2f", classification["confidence"]
@@ -746,15 +843,21 @@ async def stream_workflow_execution_v2(
 
         else:
             # action == "execute": 直接执行 V2 流程
+            _route_text = (
+                f"路由动作: execute\n"
+                f"目标模式: {_mode}\n"
+                f"置信度: {_conf:.0%}"
+            )
             yield _emit(AgentSSEEvent.create_v2_only(
                 run_id=run_id,
                 event_type="agent.think",
                 agent_id=agent_id,
                 thread_id=thread_id,
                 agent_name=None,
+                action="gateway.route",
                 status="ok",
-                summary=f"路由决策: 执行 V2 {classification['mode']} 流程",
-                text=_reasoning or f"将执行 {classification['mode']} 流程",
+                summary=f"路由决策: 执行 V2 {_mode} 流程",
+                text=_route_text,
             ))
             # [阶段3] Orchestrator 主编排（替代阶段1 内联 runner）
             from ..agent_runtime.orchestrator import run_v2_orchestrator
@@ -783,6 +886,13 @@ async def stream_workflow_execution_v2(
                 status="ok",
                 summary=f"V2 完成 (mode={mode})",
             ))
+            _v2_record_multi_turn(
+                thread_id,
+                user_query,
+                action=action,
+                mode=mode,
+                response_hint=f"[V2 execute {mode}]",
+            )
             return
 
         # ===== clarify 等路径结束 =====
@@ -794,6 +904,17 @@ async def stream_workflow_execution_v2(
             status="ok",
             summary=f"V2 流程完成 (mode={classification['mode']}, action={action})",
         ))
+        _v2_record_multi_turn(
+            thread_id,
+            user_query,
+            action=action,
+            mode=_mode,
+            response_hint=(
+                f"[V2 clarify {_mode}] {_reasoning[:200]}"
+                if action == "clarify"
+                else f"[V2 {action} {_mode}]"
+            ),
+        )
 
     except asyncio.CancelledError:
         logger.info("[V2 Stream] Client disconnected, threadId=%s", thread_id)
@@ -817,7 +938,8 @@ async def stream_workflow_execution_v2(
 async def stream_search_legacy(
     agentId: int = Query(..., description="Agent ID"),
     query: str = Query(..., min_length=1, description="用户问题"),
-    threadId: str | None = Query(None, description="会话线程ID"),
+    threadId: str | None = Query(None, description="会话线程ID（建议与 chat_session.id 一致）"),
+    sessionId: str | None = Query(None, description="会话ID；threadId 缺省时用作工作记忆键"),
     humanFeedback: bool = Query(False, description="是否启用人工反馈"),
     humanFeedbackContent: str | None = Query(None, description="人工反馈内容"),
     rejectedPlan: bool = Query(False, description="是否拒绝计划"),
@@ -835,13 +957,15 @@ async def stream_search_legacy(
         agentId, query, threadId, runtime, forceMode,
     )
 
+    stream_thread_id = resolve_stream_thread_id(threadId, sessionId)
+
     if runtime == "v2":
         return StreamingResponse(
             stream_workflow_execution_v2(
                 agent_id=agentId,
                 user_query=query,
                 db=db,
-                thread_id=threadId,
+                thread_id=stream_thread_id,
                 force_mode=forceMode or "auto",
             ),
             media_type="text/event-stream",
@@ -857,7 +981,7 @@ async def stream_search_legacy(
             agent_id=agentId,
             user_query=query,
             db=db,
-            thread_id=threadId,
+            thread_id=stream_thread_id,
             human_feedback=humanFeedback,
             human_feedback_content=humanFeedbackContent,
             rejected_plan=rejectedPlan,

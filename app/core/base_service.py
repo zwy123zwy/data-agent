@@ -1,5 +1,5 @@
 """
-BaseService — 通用 CRUD 服务基类 (类似 Java MyBatis-Plus BaseMapper)
+BaseService — 通用 CRUD 服务基类
 
 【逐行讲解】
   全文每个语句都有编号注释，对应下方"逐行解释"。
@@ -16,11 +16,6 @@ BaseService — 通用 CRUD 服务基类 (类似 Java MyBatis-Plus BaseMapper)
     ├── SemanticModelService  → app/services/semantic_model_service.py
     └── ...
 
-【Java 对应】
-  Java:  MyBatis-Plus BaseMapper<T> / IService<T>
-  Python: 本文件 (纯 SQLAlchemy 实现，约 150 行替代 MyBatis-Plus 3 万行)
-
-【替代方案对比 — 见文件末尾】
 """
 
 # ① 泛型类型变量: T 可以是任何继承 Base 的 ORM 类

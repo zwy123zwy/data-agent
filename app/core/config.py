@@ -16,9 +16,6 @@
     - core/vector_store.py      → settings.vector_store.* (检索参数)
     - main.py                   → settings.host, settings.port (服务绑定)
 
-  Java 对应:
-    Settings ≈ Spring Boot application.yml 中的 spring.ai.alibaba.data-agent.* 配置
-
 【配置优先级】
   .env 文件 > 环境变量 > 代码默认值
 
@@ -112,8 +109,8 @@ class Settings(BaseSettings):
     """
 
     # 应用
-    app_name: str = "Python Agent V2"
-    app_version: str = "0.2.0"
+    app_name: str = "data-agent-backend"
+    app_version: str = "1.0.0"
     debug: bool = True
 
     # 数据库 — 被 core/database.py 读取
@@ -146,6 +143,17 @@ class Settings(BaseSettings):
     max_sql_retry_count: int = 10       # SQL 生成最大重试次数
     max_plan_repair_count: int = 3      # 计划修复最大尝试次数
     max_turn_history: int = 5           # 多轮对话历史最大保留轮数
+    # [阶段1] Harness V2 全新编排（app/harness），与旧 agent_runtime 并行可切换
+    harness_v2_enabled: bool = True
+    harness_v2_preflight_enabled: bool = True
+    harness_v2_delegate_execute: bool = False  # [阶段2] 默认走 harness mode_runner；应急可改 true
+    harness_v2_use_legacy_agent_runtime: bool = False  # 应急：true 时 v2 仍走旧 Gateway/Orchestrator
+    harness_max_query_chars: int = 16_000  # [阶段2] prompt_guard 用户输入字符上限
+    harness_memory_max_chars: int = 4000  # [阶段2] RuntimeContext.memory 总字符预算
+
+    # [阶段4] Harness Memory #4 存储后端：memory（单进程）| db（默认，多实例）| redis（P1）
+    multi_turn_backend: str = "db"
+    multi_turn_db_sync_mode: str = "merge"  # replace | merge（DB + 未落库内存尾部）
     enable_sql_result_chart: bool = True # 是否自动生成图表推荐
     enrich_sql_result_timeout: int = 30  # SQL 结果丰富超时
 

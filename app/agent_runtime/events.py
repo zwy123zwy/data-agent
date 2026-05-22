@@ -16,7 +16,7 @@ from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# [SSOT] V2 eventType 枚举 — 与 docs/01-ARCHITECTURE.md §6.3、前端 types/graph.ts 保持一致
+# [SSOT] V2 eventType 枚举 — 与 docs/ARCHITECTURE.md §8、前端 types/graph.ts 保持一致
 AgentEventType = Literal[
     "agent.think",
     "tool.call",

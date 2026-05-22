@@ -41,12 +41,23 @@ CLARIFY_SYSTEM_PROMPT = """你是数据分析助手。用户的问题不够明�
 不要编造查询结果，一两段即可。"""
 
 
+def _memory_prefix(ctx: RuntimeContext) -> str:
+    """[Harness: Memory #4] 从 RuntimeContext.memory 拼对话历史前缀。"""
+    if not ctx.memory:
+        return ""
+    body = "\n".join(m.content for m in ctx.memory if m.content)
+    if not body.strip():
+        return ""
+    return f"对话历史:\n{body}\n\n"
+
+
 async def stream_clarification_reply(
     ctx: RuntimeContext,
     reason: str,
 ) -> AsyncIterator[AgentSSEEvent]:
     """[阶段5] 澄清路径：LLM 流式 text.delta，主对话区逐字展示。"""
     prompt = (
+        f"{_memory_prefix(ctx)}"
         f"用户输入：{ctx.user_query}\n\n"
         f"系统判断需澄清，依据：{reason}\n\n"
         "请生成给用户的澄清引导语。"
@@ -95,11 +106,8 @@ async def stream_clarification_reply(
 
 async def _run_chitchat(ctx: RuntimeContext) -> AsyncIterator[AgentSSEEvent]:
     """[阶段5] 闲聊模式：LLM 流式 text.delta 逐字输出。"""
-    multi_turn = "\n".join(m.content for m in ctx.memory[-6:])
-    if multi_turn:
-        prompt = f"对话历史:\n{multi_turn}\n\n当前问题: {ctx.user_query}"
-    else:
-        prompt = ctx.user_query
+    prefix = _memory_prefix(ctx)
+    prompt = f"{prefix}当前问题: {ctx.user_query}" if prefix else ctx.user_query
 
     parts: list[str] = []
     try:

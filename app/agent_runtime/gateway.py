@@ -78,6 +78,28 @@ def _parse_classification(raw: str) -> dict:
     return {"mode": "chitchat", "confidence": 0.3, "reasoning": "无法解析 LLM 输出，降级为默认分类"}
 
 
+def format_conversation_history_for_prompt(
+    conversation_history: list[dict] | None,
+    *,
+    max_messages: int = 6,
+) -> str:
+    """把结构化对话历史格式化为 Gateway user prompt 片段。
+
+    数据来源由调用方注入，通常为 MultiTurnContextManager.get_messages_for_llm()。
+    """
+    if not conversation_history:
+        return ""
+    lines: list[str] = []
+    for msg in conversation_history[-max_messages:]:
+        role = "用户" if msg.get("role") == "user" else "助手"
+        content = (msg.get("content") or "").strip()
+        if content:
+            lines.append(f"{role}: {content[:500]}")
+    if not lines:
+        return ""
+    return "## 对话历史\n" + "\n".join(lines) + "\n\n"
+
+
 async def classify_intent(
     user_query: str,
     conversation_history: list[dict] | None = None,
@@ -89,28 +111,22 @@ async def classify_intent(
 
     Args:
         user_query: 用户原始输入
-        conversation_history: 可选，近期对话消息 [{"role": "user/assistant", "content": "..."}]
+        conversation_history: 近期消息，由 Controller 从 MultiTurnContextManager 加载；
+            为空表示首轮或尚无 add_turn 记录
 
     Returns:
         {"mode": "smart_query|deep_research|report|chitchat",
          "confidence": 0.0-1.0,
          "reasoning": "判断依据"}
     """
-    # 构建 user prompt：拼接对话历史 + 当前输入
-    history_text = ""
-    if conversation_history:
-        lines = []
-        for msg in conversation_history[-6:]:  # 最近 3 轮对话
-            role = "用户" if msg.get("role") == "user" else "助手"
-            content = msg.get("content", "")
-            if content:
-                lines.append(f"{role}: {content[:200]}")
-        if lines:
-            history_text = "## 对话历史\n" + "\n".join(lines) + "\n\n"
-
+    history_text = format_conversation_history_for_prompt(conversation_history)
     user_prompt = f"{history_text}## 当前用户输入\n{user_query}"
 
-    logger.info("[Gateway] 开始意图分类, query=%s", user_query[:100])
+    logger.info(
+        "[Gateway] 开始意图分类, query=%s, history_messages=%d",
+        user_query[:100],
+        len(conversation_history or []),
+    )
 
     raw = await llm_service.chat(
         system_prompt=GATEWAY_SYSTEM_PROMPT,
