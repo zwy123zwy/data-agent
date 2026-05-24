@@ -150,6 +150,9 @@ class Settings(BaseSettings):
     harness_v2_use_legacy_agent_runtime: bool = False  # 应急：true 时 v2 仍走旧 Gateway/Orchestrator
     harness_max_query_chars: int = 16_000  # [阶段2] prompt_guard 用户输入字符上限
     harness_memory_max_chars: int = 4000  # [阶段2] RuntimeContext.memory 总字符预算
+    harness_max_sql_attempts: int = 3  # [阶段2] Explorer SQL 重试上限（M2.5 单一真相源）
+    harness_tool_timeout_seconds: int = 120  # [阶段2] 单工具 timed_run 超时秒数
+    harness_sql_timeout_seconds: int = 60  # [阶段2] execute_sql 单次查询超时秒数
 
     # [阶段4] Harness Memory #4 存储后端：memory（单进程）| db（默认，多实例）| redis（P1）
     multi_turn_backend: str = "db"

@@ -605,6 +605,13 @@ async def stream_query(
     )
 
 
+# TODO(H2): _v2_record_multi_turn 写入占位符（"[Harness V2]" 等）到进程内存。
+#   H2 实施后应改为:
+#   1. 捕获 agent.complete / run.complete 事件的真实 summary/text
+#   2. 调用 ChatService.save_message() 写入 chat_message 表（持久化 SSOT）
+#   3. 不再依赖 MultiTurnContextManager.add_turn（进程内存）
+# 答：Harness 主路径已不再调用本函数。本函数仅 legacy agent_runtime 分支仍用。
+#   H2 应在 Harness 分支 Run 结束 Commit 写 chat_message；legacy 可继续 add_turn 或一并迁移。
 def _v2_record_multi_turn(
     thread_id: str,
     user_query: str,
@@ -641,18 +648,30 @@ async def stream_workflow_execution_v2(
         settings.harness_v2_enabled and not settings.harness_v2_use_legacy_agent_runtime,
     )
 
-    await ensure_multi_turn_hydrated(db, thread_id)
-
-# _emit: 将 AgentSSEEvent (Pydantic) 序列化为 SSE 帧。
-#   - event.model_dump(by_alias=True) → Python snake_case 自动转 camelCase (如 event_type→eventType)，对齐前端 JS 命名
-#   - exclude_none=True → 值为 None 的字段不出现在 JSON 中，减小帧体积，前端收到更干净的 payload
-#   - _format_logged_sse_data → 包一层 SSE data: 前缀 + 写日志
     def _emit(event: AgentSSEEvent) -> str:
         """将 AgentSSEEvent 序列化为 SSE 帧并记录日志。"""
         data = event.model_dump(by_alias=True, exclude_none=True)
         return _format_logged_sse_data(data)
 
     # [阶段1] Harness 新编排：PPAF 顺序，不复用旧 Gateway 内联逻辑
+    # =========================================================================
+    # Harness vs Legacy 分支逻辑:
+    #
+    #   前端请求 (runtime=v2)
+    #     │
+    #     ├── harness_v2_enabled=True 且 NOT harness_v2_use_legacy_agent_runtime
+    #     │   → HarnessCoordinator.stream_run() (PPAF 管线)
+    #     │     ① Preflight (安全扫描 + Agent 存在性 + 数据源探测)
+    #     │     ② Planning/Gateway (LLM 意图分类 → IntentClassification)
+    #     │     ③ Routing (置信度路由: execute/clarify/fallback_v1)
+    #     │     ④ Context/builder (装配 RuntimeContext，memory 暂为 [])
+    #     │     ⑤ dispatch (闲聊/mode_runner/澄清/V1 降级)
+    #     │   → 直接 return，不执行下方任何代码
+    #     │
+    #     └── harness_v2_enabled=False 或 harness_v2_use_legacy_agent_runtime=True
+    #         → 旧 agent_runtime 路径（下方代码）
+    #           ensure_multi_turn_hydrated → Gateway 内联分类 → agent_runtime.orchestrator
+    # =========================================================================
     if settings.harness_v2_enabled and not settings.harness_v2_use_legacy_agent_runtime:
         from ..harness.orchestration.coordinator import HarnessCoordinator
 
@@ -660,6 +679,7 @@ async def stream_workflow_execution_v2(
         last_mode = "smart_query"
         last_action = "execute"
         try:
+
             async for v2_event in coordinator.stream_run(
                 agent_id=agent_id,
                 user_query=user_query,
@@ -673,6 +693,10 @@ async def stream_workflow_execution_v2(
                     return
                 if v2_event.action and "gateway.intent" in (v2_event.action or ""):
                     last_action = "execute"
+            # TODO(H2): Harness 路径完成后未调用 _v2_record_multi_turn，本轮分析结果
+            #   未以任何形式持久化。H2 后需在此捕获最终输出并写入 chat_message 表。
+            # 答：分析结论靠 SSE 展示；assistant 落库目前靠前端 streamRequest.onComplete 的 saveMessage
+            #   （有 streamingAssistantText 时）。SQL/表格结果未自动进 chat_message。H2 后端 Commit 可补全。
             yield _emit(AgentSSEEvent.create_v2_only(
                 run_id=run_id,
                 event_type="run.complete",
@@ -681,13 +705,6 @@ async def stream_workflow_execution_v2(
                 status="ok",
                 summary=f"Harness V2 完成 (mode={last_mode})",
             ))
-            _v2_record_multi_turn(
-                thread_id,
-                user_query,
-                action=last_action,
-                mode=last_mode,
-                response_hint="[Harness V2]",
-            )
             return
         except asyncio.CancelledError:
             logger.info("[V2 Stream][Harness] Client disconnected, threadId=%s", thread_id)
@@ -714,6 +731,9 @@ async def stream_workflow_execution_v2(
 
     from ..agent_runtime.gateway import classify_intent, get_route_action
     from ..services.agent_service import AgentService
+
+    # [阶段2] 仅 legacy agent_runtime 消费 MultiTurn；Harness 路径跳过（见 ISSUES-AND-REMEDIATION B1）
+    await ensure_multi_turn_hydrated(db, thread_id)
 
     try:
         # [阶段3] 与 V1 一致：先校验 Agent，避免 ContextEngine ValueError 落入通用异常

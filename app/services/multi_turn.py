@@ -4,6 +4,12 @@
 工作记忆读路径在 multi_turn_backend=db 时以 chat_message 为 SSOT，
 经 multi_turn_store 配对后同步到进程内 contexts；add_turn 仍写内存尾部供 merge。
 设计文档：docs/ARCHITECTURE.md（L4 §6）
+
+TODO(H2): 当前仅 V1 路径和 legacy agent_runtime 使用本模块。
+  Harness 路径 (coordinator.py) 不依赖此模块——多轮记忆完全旁路。
+  H2 实施时需要决定: 是复用 MultiTurnContextManager 还是从 chat_message 直接读取。
+TODO: contexts dict 仅进程内存，无 TTL 清理，无水平扩展能力。
+  H2 如需保留此模块，应改为 Redis 或直接从 chat_message 读取后短期缓存。
 """
 from typing import List, Dict, Any, Optional, Sequence
 from ..core.config import settings

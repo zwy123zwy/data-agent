@@ -17,6 +17,16 @@ def test_pair_messages_to_turns():
     assert pairs == [("Q1", "A1"), ("Q2", "A2")]
 
 
+def test_pair_messages_consecutive_user_not_dropped():
+    """[阶段2] 连续 user 消息不再静默丢弃（子情景 2B）。"""
+    msgs = [
+        MagicMock(role="user", content="你好"),
+        MagicMock(role="user", content="帮我分析销售"),
+    ]
+    pairs = pair_messages_to_turns(msgs)
+    assert pairs == [("你好", ""), ("帮我分析销售", "")]
+
+
 def test_merge_db_and_memory_tail():
     db = [("Q1", "A1")]
     mem = [("Q1", "A1"), ("Q2", "[分析完成]")]

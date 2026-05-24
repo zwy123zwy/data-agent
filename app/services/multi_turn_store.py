@@ -29,10 +29,19 @@ def pair_messages_to_turns(
         if not text:
             continue
         if role == "user":
+            if pending_user:
+                # [阶段2] 连续 user 消息：保留上一轮（空 assistant），避免静默丢弃
+                paired.append((pending_user, ""))
             pending_user = text[:user_max]
-        elif role == "assistant" and pending_user:
-            paired.append((pending_user, text[:assistant_max]))
-            pending_user = None
+        elif role == "assistant":
+            if pending_user:
+                paired.append((pending_user, text[:assistant_max]))
+                pending_user = None
+            elif text:
+                paired.append(("", text[:assistant_max]))
+
+    if pending_user:
+        paired.append((pending_user, ""))
 
     return paired
 
