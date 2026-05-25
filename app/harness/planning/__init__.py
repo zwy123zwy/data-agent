@@ -1,6 +1,5 @@
-# [阶段1] 规划：Gateway 意图与路由
+# [阶段3] planning 包：Preflight 门控（Gateway 已移除）
 
-from app.harness.planning.gateway import classify_intent
-from app.harness.planning.routing import resolve_route_action
+from app.harness.planning.routing import needs_clarification_from_preflight
 
-__all__ = ["classify_intent", "resolve_route_action"]
+__all__ = ["needs_clarification_from_preflight"]

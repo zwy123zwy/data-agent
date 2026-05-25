@@ -16,7 +16,7 @@ class PromptConfig(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False, comment="配置名称")
     prompt_type: Mapped[str] = mapped_column(
         String(100), nullable=False, index=True,
-        comment="提示词类型: planner/report-generator/sql-generate/intent/feasibility/knowledge-recall/schema-recall/python-generate/sql-consistency"
+        comment="提示词类型: planner/report-generator/...；Harness V2: harness-gateway、harness-chitchat、harness-clarify 等，见 docs/PROMPT-ARCHITECTURE.md"
     )
     agent_id: Mapped[Optional[int]] = mapped_column(
         Integer, nullable=True, index=True,

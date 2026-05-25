@@ -14,6 +14,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.harness.types.file_ref import FileRef
+
 HarnessMode = Literal[
     "smart_query",
     "deep_research",
@@ -74,6 +76,8 @@ class RuntimeContext(BaseModel):
     business_knowledge: list[dict] = Field(default_factory=list)
     prompt_overrides: dict[str, str] = Field(default_factory=dict)
     permissions: Permissions = Field(default_factory=Permissions)
+    # [阶段4] 会话附件；M3 由 builder 装配，M4.0 恒为空列表
+    file_refs: list[FileRef] = Field(default_factory=list)
     # [暂缓] 多轮对话记忆；当前 Harness 不装配，恒为 []
     memory: list[Message] = Field(default_factory=list)
     memory_summarized: bool = False

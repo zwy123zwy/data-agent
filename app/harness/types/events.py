@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 HarnessEventType = Literal[
     "agent.think",
+    "agent.execution.started",
     "tool.call",
     "tool.result",
     "tools.available",

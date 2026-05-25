@@ -1,15 +1,4 @@
 # [阶段1] Preflight：机械校验 Agent/数据源/注入，产出 PreflightSnapshot
-# [Harness: Sandbox #5 + Intelligent Routing #3]
-#
-# Preflight 是 PPAF 管线的第一环，执行顺序:
-#   ① scan_prompt(user_query): 提示词注入扫描（正则，不调 LLM）
-#   ② Agent 存在性检查: 不存在 → blocked=True, 返回 AGENT_NOT_FOUND
-#   ③ 注入阻断检查: 命中 → blocked=True, 返回 PROMPT_INJECTION
-#   ④ run_datasource_probe: 数据源探测 + 语义模型采样
-#   ⑤ 组装 PreflightSnapshot: 汇总 ①~④ 的所有结果
-#
-# 灰度开关: harness_v2_preflight_enabled=False 时返回空快照（agent_ok=True），
-#   跳过所有校验，用于紧急回滚。
 
 from __future__ import annotations
 
@@ -38,7 +27,7 @@ async def run_preflight(
     user_query: str,
     nl2sql_only: bool = False,
 ) -> PreflightSnapshot:
-    """[阶段2] 执行 ② 用户校验；数据源探测一次写入快照字段。"""
+    """[阶段1] 执行 ② 用户校验，不调 LLM。"""
     if not getattr(settings, "harness_v2_preflight_enabled", True):
         return _empty_pass(agent_id)
 
@@ -62,6 +51,7 @@ async def run_preflight(
             block_code=guard.code or "PROMPT_INJECTION",
         )
 
+    # [阶段2] 一次探测，probe 供 builder 装配 datasets / semantic_model（避免重复查库）
     probe = await run_datasource_probe(db, agent_id=agent_id)
 
     snap = PreflightSnapshot(
@@ -70,17 +60,14 @@ async def run_preflight(
         risk_level=guard.risk_level,
         blocked=False,
         has_datasource=probe.has_datasource,
-        # TODO(Phase 3+): has_files 硬编码 False，文件分析功能未实现
-        # 答：Phase 3 任务 3.1–3.3。届时从会话文件域/上传表查询，routing 对 file_analysis 无文件走 clarify。
         has_files=False,
-        select_tables=probe.select_tables,
+        select_tables=list(probe.select_tables),
         semantic_warn=probe.semantic_warn,
         nl2sql_only=nl2sql_only,
         probe=probe,
     )
-
     logger.info(
-        "[阶段2][Preflight] agent_id=%s has_ds=%s tables=%d blocked=%s",
+        "[阶段1][Preflight] agent_id=%s has_ds=%s tables=%d blocked=%s",
         agent_id,
         probe.has_datasource,
         len(probe.select_tables),

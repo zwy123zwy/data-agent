@@ -7,7 +7,7 @@
 - Port: 8200, Docs: `http://localhost:8200/docs`
 - Frontend: `../data-agent-fronted` (React 19 + TypeScript + Vite + Ant Design + Zustand, dev port **3000** per `vite.config.ts`)
 - Dual runtime: `?runtime=v1` (legacy 17-node pipeline) / `?runtime=v2` (new Agent Runtime, in development)
-- **Tech docs SSOT**: `../docs/ARCHITECTURE.md` — **code plan** `../docs/CODE-IMPLEMENTATION-PLAN.md` — index `../docs/README.md`
+- **Docs index**: `../docs/README.md` — **design/roadmap archived** `../docs/archive/2026-05-21-design-and-roadmap/`
 - **Code comments (required)**: `../docs/CODING-CONVENTIONS.md` — every new/changed business code must include **`[阶段N] 功能说明`** in Chinese (N = OpenSpec Phase 0–5)
 
 ---

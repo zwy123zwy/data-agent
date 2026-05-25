@@ -83,6 +83,8 @@ evaluation/databases/
 # Project documentation (local only)
 docs/
 
+tests/
+
 # Docker Compose overrides (personal)
 docker-compose.override.yml
 

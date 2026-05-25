@@ -153,6 +153,15 @@ class Settings(BaseSettings):
     harness_max_sql_attempts: int = 3  # [阶段2] Explorer SQL 重试上限（M2.5 单一真相源）
     harness_tool_timeout_seconds: int = 120  # [阶段2] 单工具 timed_run 超时秒数
     harness_sql_timeout_seconds: int = 60  # [阶段2] execute_sql 单次查询超时秒数
+    harness_v2_llm_tool_pick: bool = False  # [阶段4] true 时 Agent 由 LLM 选 Tool（失败回退脚本化）
+    harness_agent_max_steps: int = 16  # [阶段4] 单 Run 最大 Tool 调用步数
+
+    # [阶段1] Gateway：低置信时是否允许降级 V1 workflow
+    harness_gateway_allow_v1_fallback: bool = False
+
+    # [阶段1] Harness 系统提示词目录（相对 backend 根）与开发热加载
+    harness_prompts_dir: str = "prompts/harness"
+    harness_prompts_hot_reload: bool = False
 
     # [阶段4] Harness Memory #4 存储后端：memory（单进程）| db（默认，多实例）| redis（P1）
     multi_turn_backend: str = "db"

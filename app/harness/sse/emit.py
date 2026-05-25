@@ -1,23 +1,23 @@
-# [阶段2] Harness SSE 事件构造（独立于 agent_runtime.sse_emit）
+# [阶段2] Harness SSE 事件构造：薄封装 payloads → HarnessSSEEvent
 # [Harness: Observability #6]
-#
-# 事件类型与前端展示位置:
-#   agent.think  → 思考区（可折叠时间线），展示 Gateway 分类、路由决策等内部推理
-#   tool.call    → 思考区，展示工具调用开始
-#   tool.result  → 思考区，展示工具调用结果（含 artifact 引用）
-#   text.delta   → 正文区（主对话气泡），流式逐字输出
-#   error        → 错误提示，终止当前 Run
-#   run.complete → Run 结束标记，前端据此更新会话状态
 
 from __future__ import annotations
 
+from app.harness.sse.actions import HarnessSseAction
+from app.harness.sse.payloads import (
+    agent_execution_started_payload,
+    preflight_error_payload,
+    run_error_payload,
+    text_delta_payload,
+    think_payload,
+    tool_call_payload,
+    tool_result_payload,
+    tools_available_payload,
+)
+from app.harness.sse.protocol import RunContext
 from app.harness.tools.base import ToolResult
 from app.harness.types.context import RuntimeContext
 from app.harness.types.events import HarnessSSEEvent
-
-
-def _artifact_refs(result: ToolResult) -> list[dict]:
-    return [{"id": a.id, "type": a.type} for a in result.artifacts]
 
 
 def emit_think(
@@ -25,19 +25,10 @@ def emit_think(
     *,
     summary: str,
     text: str = "",
-    action: str = "harness.think",
+    action: str = HarnessSseAction.THINK_DEFAULT,
 ) -> HarnessSSEEvent:
     """[阶段2] 思考区 agent.think。"""
-    return HarnessSSEEvent.create(
-        run_id=ctx.run_id,
-        event_type="agent.think",
-        agent_id=ctx.agent_id,
-        thread_id=ctx.thread_id,
-        action=action,
-        status="ok",
-        summary=summary[:200],
-        text=text or summary,
-    )
+    return HarnessSSEEvent.create(**think_payload(ctx, summary=summary, text=text, action=action))
 
 
 def emit_text_delta(
@@ -45,19 +36,11 @@ def emit_text_delta(
     delta: str,
     *,
     agent_name: str = "Harness",
-    action: str = "harness.reply",
+    action: str = HarnessSseAction.REPLY,
 ) -> HarnessSSEEvent:
     """[阶段2] 正文区 text.delta。"""
     return HarnessSSEEvent.create(
-        run_id=ctx.run_id,
-        event_type="text.delta",
-        agent_id=ctx.agent_id,
-        thread_id=ctx.thread_id,
-        agent_name=agent_name,
-        action=action,
-        status="running",
-        text=delta,
-        text_type="TEXT",
+        **text_delta_payload(ctx, delta, agent_name=agent_name, action=action),
     )
 
 
@@ -71,15 +54,15 @@ def emit_error(
     summary: str,
 ) -> HarnessSSEEvent:
     """[阶段2] Preflight / Gateway 阻断错误。"""
+    _ = ctx
     return HarnessSSEEvent.create(
-        run_id=run_id,
-        event_type="error",
-        agent_id=agent_id,
-        thread_id=thread_id,
-        status="error",
-        summary=summary[:200],
-        error=code,
-        text=summary,
+        **preflight_error_payload(
+            run_id=run_id,
+            agent_id=agent_id,
+            thread_id=thread_id,
+            code=code,
+            summary=summary,
+        ),
     )
 
 
@@ -90,16 +73,7 @@ def emit_tool_call(
     summary: str,
 ) -> HarnessSSEEvent:
     """[阶段2] tool.call。"""
-    return HarnessSSEEvent.create(
-        run_id=ctx.run_id,
-        event_type="tool.call",
-        agent_id=ctx.agent_id,
-        thread_id=ctx.thread_id,
-        agent_name=agent_name,
-        action=tool_name,
-        status="running",
-        summary=summary[:200],
-    )
+    return HarnessSSEEvent.create(**tool_call_payload(ctx, agent_name, tool_name, summary))
 
 
 def emit_tool_result(
@@ -108,19 +82,21 @@ def emit_tool_result(
     result: ToolResult,
 ) -> HarnessSSEEvent:
     """[阶段2] tool.result（含 V1 RESULT_SET 兼容字段）。"""
+    return HarnessSSEEvent.create(**tool_result_payload(ctx, agent_name, result))
+
+
+def emit_agent_execution_started(
+    ctx: RuntimeContext,
+    *,
+    run_profile: str = "smart_query",
+) -> HarnessSSEEvent:
+    """[阶段1] Agent 分支进入 tool 循环前的显式开始信号。"""
     return HarnessSSEEvent.create(
-        run_id=ctx.run_id,
-        event_type="tool.result",
-        agent_id=ctx.agent_id,
-        thread_id=ctx.thread_id,
-        agent_name=agent_name,
-        action=result.tool_name,
-        status=result.status,
-        summary=result.summary[:200],
-        artifact_refs=_artifact_refs(result) or None,
-        text_type=result.v1_text_type,
-        text=result.v1_text or result.summary,
-        error=result.summary if result.status == "error" else None,
+        **agent_execution_started_payload(
+            ctx,
+            run_profile=run_profile,
+            action=HarnessSseAction.AGENT_STARTED,
+        ),
     )
 
 
@@ -131,12 +107,9 @@ def emit_run_error(
     error_code: str | None = None,
 ) -> HarnessSSEEvent:
     """[阶段2] 不可恢复失败。"""
-    return HarnessSSEEvent.create(
-        run_id=ctx.run_id,
-        event_type="error",
-        agent_id=ctx.agent_id,
-        thread_id=ctx.thread_id,
-        status="error",
-        summary=summary[:200],
-        error=error_code or summary[:200],
-    )
+    return HarnessSSEEvent.create(**run_error_payload(ctx, summary, error_code=error_code))
+
+
+def emit_tools_available(ctx: RunContext, tool_names: list[str]) -> HarnessSSEEvent:
+    """[阶段2] tools.available — agent_loop 规划阶段。"""
+    return HarnessSSEEvent.create(**tools_available_payload(ctx, tool_names))

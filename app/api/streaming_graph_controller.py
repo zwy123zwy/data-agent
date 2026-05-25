@@ -676,8 +676,6 @@ async def stream_workflow_execution_v2(
         from ..harness.orchestration.coordinator import HarnessCoordinator
 
         coordinator = HarnessCoordinator()
-        last_mode = "smart_query"
-        last_action = "execute"
         try:
 
             async for v2_event in coordinator.stream_run(
@@ -686,13 +684,10 @@ async def stream_workflow_execution_v2(
                 db=db,
                 thread_id=thread_id,
                 run_id=run_id,
-                force_mode=force_mode,
             ):
                 yield _emit(v2_event)
                 if v2_event.event_type == "error":
                     return
-                if v2_event.action and "gateway.intent" in (v2_event.action or ""):
-                    last_action = "execute"
             # TODO(H2): Harness 路径完成后未调用 _v2_record_multi_turn，本轮分析结果
             #   未以任何形式持久化。H2 后需在此捕获最终输出并写入 chat_message 表。
             # 答：分析结论靠 SSE 展示；assistant 落库目前靠前端 streamRequest.onComplete 的 saveMessage
@@ -703,7 +698,7 @@ async def stream_workflow_execution_v2(
                 agent_id=agent_id,
                 thread_id=thread_id,
                 status="ok",
-                summary=f"Harness V2 完成 (mode={last_mode})",
+                summary="Harness V2 完成",
             ))
             return
         except asyncio.CancelledError:

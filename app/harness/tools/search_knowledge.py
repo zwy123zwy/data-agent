@@ -26,14 +26,11 @@ from app.harness.types.artifacts import Artifact, Provenance
 from app.harness.types.context import RuntimeContext
 from app.core.llm import llm_service
 from app.core.text_utils import clean_code_block
+from app.harness.prompts import HarnessPromptKey, get_system_prompt_sync
 from app.schemas.knowledge import KnowledgeSearchRequest
 from app.services.knowledge_service import KnowledgeService
 
 logger = logging.getLogger(__name__)
-
-_EVIDENCE_REWRITE_SYSTEM = """你是一个查询重写助手。将用户问题改写为更适合检索的独立查询。
-返回 JSON: {"standalone_query": "...", "rewritten": false}"""
-
 
 def _extract_standalone_query(llm_output: str) -> str | None:
     try:
@@ -58,7 +55,11 @@ class HarnessSearchKnowledgeTool(BaseTool):
         search_query = ctx.user_query
         try:
             rewrite_prompt = f"用户问题: {ctx.user_query}"
-            llm_out = await llm_service.chat(_EVIDENCE_REWRITE_SYSTEM, rewrite_prompt)
+            rewrite_system = get_system_prompt_sync(
+                HarnessPromptKey.SEARCH_KNOWLEDGE_REWRITE,
+                overrides=ctx.prompt_overrides,
+            )
+            llm_out = await llm_service.chat(rewrite_system, rewrite_prompt)
             standalone = _extract_standalone_query(llm_out)
             if standalone:
                 search_query = standalone

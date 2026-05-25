@@ -3,7 +3,7 @@
 #
 # PreflightSnapshot 是 PPAF 第一环的输出，被 downstream 各环节只读消费:
 #   - coordinator: 检查 blocked 字段决定是否终止
-#   - routing:      检查 has_datasource / has_files 决定是否走 clarify
+#   - routing:      检查 has_datasource（及 agent 置信度）决定是否走 clarify
 #   - builder:      读取 probe.datasets 和 probe.semantic_prompt 装配 RuntimeContext
 #   - gateway:      通过 to_prompt_lines() 注入 LLM 分类 prompt 的环境摘要
 #

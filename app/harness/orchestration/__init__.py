@@ -1,6 +1,6 @@
-# [阶段2] V2 编排入口
+# [阶段4] Harness 编排层导出
 
+from app.harness.orchestration.agent_loop import run_agent_loop
 from app.harness.orchestration.coordinator import HarnessCoordinator
-from app.harness.orchestration.mode_runner import run_mode
 
-__all__ = ["HarnessCoordinator", "run_mode"]
+__all__ = ["HarnessCoordinator", "run_agent_loop"]

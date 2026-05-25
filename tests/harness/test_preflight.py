@@ -4,9 +4,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.harness.perception.preflight import run_preflight
-from app.harness.planning.routing import resolve_route_action
 from app.harness.types.datasource_probe import DatasourceProbeSnapshot
-from app.harness.types.intent import IntentClassification
 from app.harness.types.preflight import PreflightSnapshot
 
 
@@ -55,21 +53,3 @@ def test_preflight_attaches_probe():
     assert snap.blocked is False
     assert snap.probe is not None
     assert snap.probe.has_datasource is True
-
-
-def test_routing_clarify_without_datasource():
-    pre = PreflightSnapshot(agent_ok=True, has_datasource=False)
-    action = resolve_route_action(
-        IntentClassification(mode="smart_query", confidence=0.9, reasoning=""),
-        pre,
-    )
-    assert action == "clarify"
-
-
-def test_routing_chitchat_executes_without_datasource():
-    pre = PreflightSnapshot(agent_ok=True, has_datasource=False)
-    action = resolve_route_action(
-        IntentClassification(mode="chitchat", confidence=0.2, reasoning=""),
-        pre,
-    )
-    assert action == "execute"

@@ -1,14 +1,16 @@
-# [阶段1-3] V2 SSE 事件构造辅助（Runner / Orchestrator / Agent 共用）
+# [阶段1-3] V2 SSE 事件构造 — 复用 harness.sse.payloads，产出 AgentSSEEvent
 
 from __future__ import annotations
 
 from app.agent_runtime.context import RuntimeContext
 from app.agent_runtime.events import AgentSSEEvent
 from app.agent_runtime.tools.base import ToolResult
-
-
-def _artifact_refs(result: ToolResult) -> list[dict]:
-    return [{"id": a.id, "type": a.type} for a in result.artifacts]
+from app.harness.sse.payloads import (
+    run_error_payload,
+    text_delta_payload,
+    tool_call_payload,
+    tool_result_payload,
+)
 
 
 def emit_tool_call(
@@ -18,16 +20,7 @@ def emit_tool_call(
     summary: str,
 ) -> AgentSSEEvent:
     """[阶段1] 构造 tool.call 事件。"""
-    return AgentSSEEvent.create_v2_only(
-        run_id=ctx.run_id,
-        event_type="tool.call",
-        agent_id=ctx.agent_id,
-        thread_id=ctx.thread_id,
-        agent_name=agent_name,
-        action=tool_name,
-        status="running",
-        summary=summary[:200],
-    )
+    return AgentSSEEvent.create_v2_only(**tool_call_payload(ctx, agent_name, tool_name, summary))
 
 
 def emit_text_delta(
@@ -40,16 +33,13 @@ def emit_text_delta(
 ) -> AgentSSEEvent:
     """[阶段5] LLM 流式片段 — 前端逐字渲染。"""
     return AgentSSEEvent.create_v2_only(
-        run_id=ctx.run_id,
-        event_type="text.delta",
-        agent_id=ctx.agent_id,
-        thread_id=ctx.thread_id,
-        agent_name=agent_name,
-        action=action,
-        status="running",
-        summary="",
-        text=delta,
-        text_type=text_type,
+        **text_delta_payload(
+            ctx,
+            delta,
+            agent_name=agent_name,
+            action=action,
+            text_type=text_type,
+        ),
     )
 
 
@@ -60,15 +50,7 @@ def emit_run_error(
     error_code: str | None = None,
 ) -> AgentSSEEvent:
     """[阶段3] 不可恢复失败 — 供 Orchestrator 终止后续 Agent。"""
-    return AgentSSEEvent.create_v2_only(
-        run_id=ctx.run_id,
-        event_type="error",
-        agent_id=ctx.agent_id,
-        thread_id=ctx.thread_id,
-        status="error",
-        summary=summary[:200],
-        error=error_code or summary[:200],
-    )
+    return AgentSSEEvent.create_v2_only(**run_error_payload(ctx, summary, error_code=error_code))
 
 
 def emit_tool_result(
@@ -77,17 +59,4 @@ def emit_tool_result(
     result: ToolResult,
 ) -> AgentSSEEvent:
     """[阶段1] 构造 tool.result 事件（含 V1 RESULT_SET 兼容字段）。"""
-    return AgentSSEEvent.create_v2_only(
-        run_id=ctx.run_id,
-        event_type="tool.result",
-        agent_id=ctx.agent_id,
-        thread_id=ctx.thread_id,
-        agent_name=agent_name,
-        action=result.tool_name,
-        status=result.status,
-        summary=result.summary[:200],
-        artifact_refs=_artifact_refs(result) or None,
-        text_type=result.v1_text_type,
-        text=result.v1_text or result.summary,
-        error=result.summary if result.status == "error" else None,
-    )
+    return AgentSSEEvent.create_v2_only(**tool_result_payload(ctx, agent_name, result))

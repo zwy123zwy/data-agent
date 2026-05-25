@@ -23,11 +23,13 @@ def test_create_text_delta_event():
 
 
 def test_agent_event_type_literal_matches_frontend():
-    # 与 data-agent-fronted src/types/graph.ts AgentEventType 保持 8 项一致
+    # 与 data-agent-fronted src/types/graph.ts AgentEventType 保持一致
     expected: set[AgentEventType] = {
         "agent.think",
+        "agent.execution.started",
         "tool.call",
         "tool.result",
+        "tools.available",
         "text.delta",
         "agent.complete",
         "clarification.requested",
@@ -35,3 +37,9 @@ def test_agent_event_type_literal_matches_frontend():
         "error",
     }
     assert set(AGENT_EVENT_TYPES) == expected
+
+
+def test_harness_event_types_include_agent_execution_started():
+    from app.harness.types.events import HARNESS_EVENT_TYPES
+
+    assert "agent.execution.started" in HARNESS_EVENT_TYPES

@@ -8,14 +8,12 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from app.core.llm import llm_service
+from app.harness.prompts import HarnessPromptKey, get_system_prompt_sync
 from app.harness.sse.emit import emit_text_delta
 from app.harness.types.context import RuntimeContext
 from app.harness.types.events import HarnessSSEEvent
 
 logger = logging.getLogger(__name__)
-
-_ANSWER_SYSTEM = """[阶段2] 你是数据分析助手。根据用户问题与查询结果，用简洁中文给出结论与关键数字。
-不要编造未出现在结果中的数据；若结果为空，说明未查到数据并建议用户改问法。"""
 
 # [阶段2] 注入 LLM 的结果集最大字符，避免撑爆上下文
 _MAX_RESULT_JSON_CHARS = 12_000
@@ -53,7 +51,11 @@ async def stream_answer_from_sql(
 
     parts: list[str] = []
     try:
-        async for delta in llm_service.chat_stream(_ANSWER_SYSTEM, prompt, temperature=0.2):
+        system_prompt = get_system_prompt_sync(
+            HarnessPromptKey.ANSWER,
+            overrides=ctx.prompt_overrides,
+        )
+        async for delta in llm_service.chat_stream(system_prompt, prompt, temperature=0.2):
             if delta:
                 parts.append(delta)
                 yield emit_text_delta(

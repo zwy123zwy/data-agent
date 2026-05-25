@@ -21,11 +21,10 @@ from app.harness.types.artifacts import Artifact, Provenance
 from app.harness.types.context import RuntimeContext
 from app.core.llm import llm_service
 from app.core.text_utils import clean_code_block
+from app.harness.prompts import HarnessPromptKey, get_system_prompt_sync
 from app.harness.tools.constants import NL2SQL_INSTRUCTION, NL2SQL_PLAN_JSON
 
 logger = logging.getLogger(__name__)
-
-_SQL_SYSTEM = """你是 SQL 专家。只返回 SELECT 语句，不要解释。禁止写操作。"""
 
 
 class HarnessGenerateSqlTool(BaseTool):
@@ -76,7 +75,11 @@ class HarnessGenerateSqlTool(BaseTool):
             )
 
         try:
-            raw = await llm_service.chat(_SQL_SYSTEM, prompt, temperature=0.0)
+            system_prompt = get_system_prompt_sync(
+                HarnessPromptKey.GENERATE_SQL,
+                overrides=ctx.prompt_overrides,
+            )
+            raw = await llm_service.chat(system_prompt, prompt, temperature=0.0)
             sql = clean_code_block(raw, lang="sql")
         except Exception as exc:
             logger.error("[阶段2][generate_sql] %s", exc)

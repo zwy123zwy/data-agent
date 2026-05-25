@@ -19,8 +19,10 @@ from pydantic import BaseModel, ConfigDict, Field
 # [SSOT] V2 eventType 枚举 — 与 docs/ARCHITECTURE.md §8、前端 types/graph.ts 保持一致
 AgentEventType = Literal[
     "agent.think",
+    "agent.execution.started",
     "tool.call",
     "tool.result",
+    "tools.available",
     "text.delta",
     "agent.complete",
     "clarification.requested",
